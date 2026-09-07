@@ -1,0 +1,33 @@
+{
+  "coordinateSystem": {
+    "origin": "markerA",
+    "unit": "meter",
+    "description": "Marker A bildet den Ursprung. Alle Positionen und Achsen von Marker B sind relativ zu Marker A angegeben."
+  },
+  "markerA": {
+    "id": 0,
+    "position": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "xAxis": {
+      "x": -0.9983426312099353,
+      "y": -0.044214660496852194,
+      "z": -0.03683822072211537
+    }
+  },
+  "markerB": {
+    "id": 1,
+    "position": {
+      "x": 0.1286517577473994,
+      "y": -0.13462160424755243,
+      "z": -0.0009951099499909688
+    },
+    "xAxis": {
+      "x": 0.7096214369640501,
+      "y": -0.7044173471009301,
+      "z": 0.01528454462405717
+    }
+  }
+}
