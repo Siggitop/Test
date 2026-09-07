@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Rohrleitung 3D verlegen</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: #14161a; height: 100%; }
+  canvas { display: block; }
+  #ui {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(20,22,26,0.85); color: #e8e8e8;
+    font-family: system-ui, sans-serif; font-size: 14px;
+    padding: 14px 16px; border-radius: 8px; line-height: 1.5;
+    border: 1px solid #333;
+  }
+  #ui b { color: #6db3ff; }
+  #ui button {
+    background: #2f4a6b; color: #fff; border: none;
+    padding: 6px 10px; border-radius: 5px; cursor: pointer;
+    margin-right: 6px; margin-top: 6px; font-size: 13px;
+  }
+  #ui button:hover { background: #3d5f88; }
+  #hoehe { font-weight: bold; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div><b>Rohrleitung verlegen</b></div>
+  <div>Klick = Punkt setzen &nbsp;|&nbsp; Ziehen = Kamera drehen &nbsp;|&nbsp; Scrollen = Zoom</div>
+  <div>Höhe für nächsten Punkt: <span id="hoehe">0.0</span> m</div>
+  <button id="hoch">Höhe +0.5m</button>
+  <button id="runter">Höhe -0.5m</button>
+  <br>
+  <button id="undo">Letzten Punkt entfernen</button>
+  <button id="reset">Alles zurücksetzen</button>
+  <div style="margin-top:8px;">Gesamtlänge: <span id="laenge">0.0</span> m &nbsp;|&nbsp; Segmente: <span id="anzahl">0</span></div>
+  <div style="margin-top:6px; color:#999; font-size:12px;">Richtungen werden auf 45°-Schritte (horizontal &amp; vertikal) eingerastet.</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+  // ---------- Szene, Kamera, Renderer ----------
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x14161a);
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // ---------- Licht ----------
+  scene.add(new THREE.AmbientLight(0x606060));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+  dirLight.position.set(5, 10, 7);
+  scene.add(dirLight);
+
+  // ---------- Boden / Grid ----------
+  const grid = new THREE.GridHelper(20, 40, 0x3a6ea5, 0x2a2d33);
+  scene.add(grid);
+  const axes = new THREE.AxesHelper(1.5);
+  scene.add(axes);
+
+  // ---------- Manuelle Orbit-Kamera (kein externes OrbitControls nötig) ----------
+  let camTheta = Math.PI / 4;   // horizontaler Winkel
+  let camPhi = Math.PI / 3.2;   // vertikaler Winkel
+  let camRadius = 12;
+  const target = new THREE.Vector3(0, 0.5, 0);
+
+  function updateCamera() {
+    camPhi = Math.max(0.15, Math.min(Math.PI / 2 - 0.05, camPhi));
+    const x = target.x + camRadius * Math.sin(camPhi) * Math.cos(camTheta);
+    const y = target.y + camRadius * Math.cos(camPhi);
+    const z = target.z + camRadius * Math.sin(camPhi) * Math.sin(camTheta);
+    camera.position.set(x, y, z);
+    camera.lookAt(target);
+  }
+  updateCamera();
+
+  let isDragging = false;
+  let dragMoved = false;
+  let lastX = 0, lastY = 0;
+
+  renderer.domElement.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    dragMoved = false;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+    camTheta -= dx * 0.006;
+    camPhi -= dy * 0.006;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    updateCamera();
+  });
+  renderer.domElement.addEventListener('wheel', (e) => {
+    camRadius = Math.max(3, Math.min(40, camRadius + e.deltaY * 0.01));
+    updateCamera();
+  });
+
+  // ---------- Höhe für nächsten Punkt ----------
+  let currentHeight = 0;
+  const hoeheLabel = document.getElementById('hoehe');
+  document.getElementById('hoch').onclick = () => {
+    currentHeight += 0.5;
+    hoeheLabel.textContent = currentHeight.toFixed(1);
+  };
+  document.getElementById('runter').onclick = () => {
+    currentHeight -= 0.5;
+    hoeheLabel.textContent = currentHeight.toFixed(1);
+  };
+
+  // ---------- Rohrpunkte & Snapping ----------
+  const points = [];
+  const pipeGroup = new THREE.Group();
+  scene.add(pipeGroup);
+
+  const pipeMat = new THREE.MeshStandardMaterial({ color: 0x4a90d9, metalness: 0.3, roughness: 0.4 });
+  const jointMat = new THREE.MeshStandardMaterial({ color: 0xffa726 });
+  const pipeRadius = 0.08;
+  const step45 = Math.PI / 4;
+
+  function snapToGrid(v, size) {
+    return Math.round(v / size) * size;
+  }
+
+  // Snappt eine Richtung auf 45°-Schritte, sowohl horizontal (um Y) als auch vertikal
+  function snapDirection(dir) {
+    const len = dir.length();
+    if (len < 1e-6) return dir.clone();
+    const theta = Math.atan2(dir.z, dir.x);
+    const phi = Math.asin(Math.max(-1, Math.min(1, dir.y / len)));
+    const sTheta = Math.round(theta / step45) * step45;
+    const sPhi = Math.round(phi / step45) * step45;
+    return new THREE.Vector3(
+      Math.cos(sPhi) * Math.cos(sTheta),
+      Math.sin(sPhi),
+      Math.cos(sPhi) * Math.sin(sTheta)
+    ).multiplyScalar(len);
+  }
+
+  function addSegmentMesh(a, b) {
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const length = dir.length();
+    const geo = new THREE.CylinderGeometry(pipeRadius, pipeRadius, length, 12);
+    const mesh = new THREE.Mesh(geo, pipeMat);
+    const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+    mesh.position.copy(mid);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    pipeGroup.add(mesh);
+  }
+
+  function addJointMesh(p) {
+    const geo = new THREE.SphereGeometry(pipeRadius * 1.25, 12, 12);
+    const mesh = new THREE.Mesh(geo, jointMat);
+    mesh.position.copy(p);
+    pipeGroup.add(mesh);
+  }
+
+  function rebuildPipe() {
+    pipeGroup.clear();
+    for (let i = 0; i < points.length; i++) {
+      addJointMesh(points[i]);
+      if (i > 0) addSegmentMesh(points[i - 1], points[i]);
+    }
+    updateInfo();
+  }
+
+  function updateInfo() {
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+      total += points[i].distanceTo(points[i - 1]);
+    }
+    document.getElementById('laenge').textContent = total.toFixed(2);
+    document.getElementById('anzahl').textContent = Math.max(0, points.length - 1);
+  }
+
+  // ---------- Klick = Punkt setzen ----------
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  renderer.domElement.addEventListener('mouseup', (e) => {
+    if (dragMoved) return; // war Kamera-Drag, kein Klick zum Platzieren
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -currentHeight);
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(plane, hit)) return;
+
+    hit.x = snapToGrid(hit.x, 0.5);
+    hit.z = snapToGrid(hit.z, 0.5);
+    hit.y = currentHeight;
+
+    if (points.length === 0) {
+      points.push(hit);
+    } else {
+      const last = points[points.length - 1];
+      const rawDir = new THREE.Vector3().subVectors(hit, last);
+      const snapped = snapDirection(rawDir);
+      points.push(new THREE.Vector3().addVectors(last, snapped));
+    }
+    rebuildPipe();
+  });
+
+  document.getElementById('undo').onclick = () => {
+    points.pop();
+    rebuildPipe();
+  };
+  document.getElementById('reset').onclick = () => {
+    points.length = 0;
+    rebuildPipe();
+  };
+
+  // ---------- Fenstergröße ----------
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- Render-Loop ----------
+  function animate() {
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+  animate();
+</script>
+</body>
+</html>
