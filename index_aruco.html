@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>RohrRouting – Three.js Prototyp</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0b1220;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;touch-action:none}
+#app{position:fixed;inset:0} canvas{display:block}
+#top{position:fixed;left:0;right:0;top:0;height:64px;background:rgba(8,15,27,.92);display:flex;align-items:center;gap:8px;padding:0 14px;z-index:5;box-sizing:border-box}
+h1{font-size:19px;margin:0 18px 0 4px}.logo{font-size:27px}
+button,select{border:1px solid #40516d;background:#111d31;color:#eef4ff;border-radius:10px;padding:11px 14px;font-size:14px}
+button.active{background:#2468e8;border-color:#4e8cff}
+#panel{position:fixed;right:14px;top:78px;width:275px;background:rgba(9,17,30,.94);border:1px solid #31435e;border-radius:15px;padding:18px;z-index:5;box-sizing:border-box}
+#panel h2{margin:0 0 18px;font-size:20px}
+.step{display:flex;gap:12px;margin:13px 0}.num{min-width:28px;height:28px;border-radius:50%;background:#2468e8;display:grid;place-items:center;font-weight:700}
+.step b{display:block;margin-bottom:3px}.muted{color:#a9b8ce;font-size:13px;line-height:1.35}
+.row{display:flex;gap:7px;margin-top:8px}.row>*{flex:1}
+#bottom{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;background:rgba(9,17,30,.9);padding:11px 20px;border-radius:12px;border:1px solid #31435e;color:#cbd7e8}
+#hint{position:fixed;left:18px;bottom:18px;z-index:5;color:#aebbd0;font-size:12px}
+@media(max-width:700px){#panel{width:220px;right:8px;top:72px;padding:12px}.step{margin:8px 0}.muted{font-size:11px}#top{height:56px}h1{font-size:16px;margin-right:4px}.desktopOnly{display:none}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="top">
+ <span class="logo">⌁</span><h1>RohrRouting</h1>
+ <button id="straight" class="active">Gerade</button>
+ <button id="b90">Biegung 90°</button>
+ <button id="b45">Biegung 45°</button>
+ <select id="diam"><option>Ø 20 mm</option><option>Ø 25 mm</option><option>Ø 32 mm</option><option>Ø 40 mm</option></select>
+ <button id="undo">↶</button><button id="reset">Neu</button>
+</div>
+<div id="panel">
+ <h2>Rohr verlegen</h2>
+ <div class="step"><span class="num">1</span><div><b>Rohrende antippen</b><div class="muted">Das aktive Rohrende wird markiert.</div></div></div>
+ <div class="step"><span class="num">2</span><div><b>Richtung wählen</b><div class="muted">Ziehe vom Ende in die gewünschte Richtung oder tippe auf eine Achse.</div></div></div>
+ <div class="step"><span class="num">3</span><div><b>Segment erstellen</b><div class="muted">Gerade, 90° oder 45° wird automatisch erzeugt.</div></div></div>
+ <hr style="border:0;border-top:1px solid #31435e">
+ <b>Aktueller Modus</b>
+ <div class="row"><button id="mode">Gerade</button></div>
+ <div style="margin-top:14px"><b>Rohrdurchmesser</b><div class="muted" id="dtext">20 mm</div></div><div style="margin-top:14px"><b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div></div>
+</div>
+<div id="bottom">Startpunkt = ArUco-Marker A · X-Achse = Rohrachse · Ziel = Marker B</div>
+<div id="hint">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x101827);
+scene.add(new THREE.HemisphereLight(0xffffff,0x30405a,2.1));
+const dl=new THREE.DirectionalLight(0xffffff,2.2); dl.position.set(4,7,5); scene.add(dl);
+
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.01,100);
+camera.position.copy(markerA.position).add(new THREE.Vector3(3,2.5,4));
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace; document.querySelector('#app').appendChild(renderer.domElement);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.target.copy(markerA.position);
+
+const grid=new THREE.GridHelper(8,16,0x3b4d66,0x26354a); scene.add(grid);
+const floor=new THREE.Mesh(new THREE.BoxGeometry(8,.08,8),new THREE.MeshStandardMaterial({color:0x182234}));
+floor.position.y=-.04; scene.add(floor);
+
+const pipes=new THREE.Group(); scene.add(pipes);
+const joints=new THREE.Group(); scene.add(joints);
+const markers=new THREE.Group(); scene.add(markers);
+
+// ArUco-Daten werden aus markers.json geladen.
+// Koordinaten und lokale Marker-X-Achsen kommen aus OpenCV.
+// OpenCV: X rechts, Y nach unten, Z von der Kamera weg.
+// Three.js: X rechts, Y nach oben, Z nach hinten.
+function cvToThree(v){
+  return new THREE.Vector3(v.x, -v.y, -v.z);
+}
+
+let markerData;
+try {
+  markerData = await fetch('markers.json').then(r=>{
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
+} catch(err) {
+  console.error('markers.json konnte nicht geladen werden:', err);
+  markerData = {
+    markerA:{id:'A',position:{x:0,y:0,z:0},xAxis:{x:1,y:0,z:0}},
+    markerB:{id:'B',position:{x:2,y:0,z:0},xAxis:{x:-1,y:0,z:0}}
+  };
+}
+
+function readMarker(m){
+  return {
+    id:m.id,
+    position:cvToThree(m.position),
+    xAxis:cvToThree(m.xAxis).normalize()
+  };
+}
+
+const markerA=readMarker(markerData.markerA);
+const markerB=readMarker(markerData.markerB);
+
+// Die Marker-Mitten sind die Rohrenden.
+// Die X-Achse von A zeigt aus A heraus in Rohrrichtung.
+// Bei B zeigt -X zum Rohr hin.
+let current=markerA.position.clone();
+let direction=markerA.xAxis.clone();
+
+let history=[], selectedMode='straight';
+let targetMarker=markerB;
+
+document.getElementById('markerInfo').textContent =
+  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id}`;
+
+console.log('ArUco Marker A:', markerA);
+console.log('ArUco Marker B:', markerB);
+console.log('A → B Abstand:', markerA.position.distanceTo(markerB.position).toFixed(3), 'm');
+
+let lastPipeMesh=null, lastPipeStart=null, lastPipeEnd=null;
+function pipeMat(active=false){return new THREE.MeshStandardMaterial({color:active?0x4e9cff:0xb7c6d8,metalness:.65,roughness:.25,emissive:active?0x092b5a:0})}
+function cylinderBetween(a,b,r=.10,active=false){
+ const v=new THREE.Vector3().subVectors(b,a), len=v.length(), mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,20),pipeMat(active));
+ m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize()); pipes.add(m);
+ lastPipeMesh=m; lastPipeStart=a.clone(); lastPipeEnd=b.clone();
+ return m;
+}
+function elbow(pivot,fromDir,toDir,r=.10){
+ const br=r*3.0;
+ const p0=pivot.clone().sub(fromDir.clone().normalize().multiplyScalar(br));
+ const p1=pivot.clone().add(toDir.clone().normalize().multiplyScalar(br));
+ const curve=new THREE.QuadraticBezierCurve3(p0,pivot.clone(),p1);
+ const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,18,r,12,false),pipeMat(false));
+ pipes.add(tube); return {p0,p1,br};
+}
+const CARDINALS=[new THREE.Vector3(1,0,0),new THREE.Vector3(-1,0,0),new THREE.Vector3(0,1,0),new THREE.Vector3(0,-1,0),new THREE.Vector3(0,0,1),new THREE.Vector3(0,0,-1)];
+// Liefert 4 zur aktuellen Rohrrichtung senkrechte Richtungen – per Kreuzprodukt berechnet,
+// funktioniert also auch, wenn "forward" selbst schon diagonal (45°) ist, nicht nur bei Achsenrichtungen.
+function perpDirs(forward){
+ const ref=Math.abs(forward.y)>.9?new THREE.Vector3(1,0,0):new THREE.Vector3(0,1,0);
+ const u=new THREE.Vector3().crossVectors(ref,forward).normalize();
+ const v=new THREE.Vector3().crossVectors(forward,u).normalize();
+ return [u.clone(),u.clone().negate(),v.clone(),v.clone().negate()];
+}
+function handleDirs(){
+ if(history.length===0) return CARDINALS.map(v=>v.clone());
+ if(selectedMode==='straight') return [direction.clone()];
+ const perps=perpDirs(direction);
+ if(selectedMode==='b90') return perps;
+ return perps.map(v=>direction.clone().add(v).normalize());
+}
+// Achsenfarbe: reine X/Y/Z-Richtungen bekommen die klassischen Rot/Grün/Blau-Farben,
+// diagonale 45°-Richtungen eine eigene Akzentfarbe, damit man sie unterscheiden kann.
+function colorFor(v){
+ if(Math.abs(v.x)>.95) return 0xff4e4e;
+ if(Math.abs(v.y)>.95) return 0x59d77b;
+ if(Math.abs(v.z)>.95) return 0x4e9cff;
+ return 0xffa64e;
+}
+function makeArrow(start, dir, length, color){
+  const group=new THREE.Group();
+  const lineGeom=new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0,0,0),
+    dir.clone().multiplyScalar(length)
+  ]);
+  group.add(new THREE.Line(
+    lineGeom,
+    new THREE.LineBasicMaterial({color})
+  ));
+
+  const cone=new THREE.Mesh(
+    new THREE.ConeGeometry(.055,.14,12),
+    new THREE.MeshBasicMaterial({color})
+  );
+  cone.position.copy(dir.clone().multiplyScalar(length));
+  cone.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0,1,0),
+    dir.clone().normalize()
+  );
+  group.add(cone);
+  group.position.copy(start);
+  return group;
+}
+
+function createMarkerVisual(marker, isStart){
+  const g=new THREE.Group();
+  g.position.copy(marker.position);
+
+  // Marker-Mitte = Rohrende
+  const sphere=new THREE.Mesh(
+    new THREE.SphereGeometry(.075,16,16),
+    new THREE.MeshStandardMaterial({color:isStart?0x4e9cff:0xffa64e})
+  );
+  g.add(sphere);
+
+  // Lokale X-Achse des ArUco-Markers = Rohranschlussachse
+  const xArrow=makeArrow(
+    new THREE.Vector3(0,0,0),
+    marker.xAxis,
+    .55,
+    isStart?0x4e9cff:0xff4e4e
+  );
+  g.add(xArrow);
+
+  // Y/Z-Achsen zur Kontrolle der Markerorientierung
+  const yAxis=new THREE.Vector3(0,1,0);
+  const zAxis=new THREE.Vector3(0,0,1);
+  // Die Darstellung von Y/Z ist relativ zur lokalen Markerrotation
+  // nicht verfügbar, wenn nur xAxis übertragen wird. Daher zeigen wir
+  // bewusst nur die definierte Rohr-X-Achse.
+  markers.add(g);
+}
+
+createMarkerVisual(markerA,true);
+createMarkerVisual(markerB,false);
+
+// Hilfslinie zwischen den beiden Rohrenden.
+// Sie ist nur eine Orientierung und KEINE automatisch erzeugte Rohrleitung.
+const targetGuide=new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    markerA.position.clone(),
+    markerB.position.clone()
+  ]),
+  new THREE.LineDashedMaterial({color:0x60708a,dashSize:.08,gapSize:.05})
+);
+targetGuide.computeLineDistances();
+scene.add(targetGuide);
+
+function endpointMarker(p,active=true){
+ joints.clear();
+ const g=new THREE.Group(); g.position.copy(p);
+ const s=new THREE.Mesh(new THREE.SphereGeometry(.16,20,20),pipeMat(active));
+ g.add(s);
+ handleDirs().forEach(v=>{
+  const c=colorFor(v);
+  const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(.48));
+  const m=new THREE.Mesh(new THREE.SphereGeometry(.12,12,12),new THREE.MeshBasicMaterial({color:c}));
+  m.userData.dir=v; m.userData.route=true; o.add(m);
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-.32)]),new THREE.LineBasicMaterial({color:c}));
+  o.add(line); g.add(o);
+ });
+ joints.add(g);
+}
+endpointMarker(current);
+
+function addSegment(dir,mode=selectedMode){
+ if(history.length===0) mode='straight';
+ const len=1.0; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
+ history.push({dir:dir.clone(),mode});
+ if(mode==='straight'){
+   cylinderBetween(current,end,.1);
+ } else {
+   // Das zuletzt gezeichnete gerade Stück endet exakt am Knickpunkt und würde sich mit dem
+   // Bogen überlappen (sichtbarer "Sporn"). Deshalb wird es hier um die Bogenlänge gekürzt,
+   // bevor der Bogen gezeichnet wird.
+   if(lastPipeMesh){
+     pipes.remove(lastPipeMesh);
+     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(.30));
+     cylinderBetween(lastPipeStart,trimmedEnd,.1);
+   }
+   const e=elbow(current,direction,dir,.1);
+   cylinderBetween(e.p1,end,.1);
+ }
+ current.copy(end); direction.copy(dir).normalize(); endpointMarker(current);
+}
+function undo(){
+  if(!history.length)return;
+  pipes.clear();
+  lastPipeMesh=null;
+  const h=history.slice(0,-1);
+  history=[];
+  current.copy(markerA.position);
+  direction.copy(markerA.xAxis).normalize();
+  h.forEach(x=>addSegment(x.dir,x.mode));
+  endpointMarker(current);
+}
+function reset(){
+  pipes.clear();
+  lastPipeMesh=null;
+  history=[];
+  current.copy(markerA.position);
+  direction.copy(markerA.xAxis).normalize();
+  endpointMarker(current);
+}
+
+['straight','b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
+ selectedMode=id; document.querySelectorAll('#top button').forEach(b=>b.classList.remove('active'));
+ document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='straight'?'Gerade':id==='b90'?'Biegung 90°':'Biegung 45°';
+ endpointMarker(current);
+});
+document.getElementById('undo').onclick=undo; document.getElementById('reset').onclick=reset;
+document.getElementById('diam').onchange=e=>document.getElementById('dtext').textContent=e.target.value.replace('Ø ','');
+document.getElementById('mode').onclick=()=>document.getElementById(selectedMode).click();
+
+const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+let draggingRoute=false,lastTouch=null;
+function pick(e){
+ const r=renderer.domElement.getBoundingClientRect();
+ const x=(e.clientX-r.left)/r.width*2-1,y=-((e.clientY-r.top)/r.height)*2+1;
+ mouse.set(x,y);ray.setFromCamera(mouse,camera);
+ const hit=ray.intersectObjects(joints.children,true).find(x=>x.object.userData.route);
+ return hit?.object.userData.dir||null;
+}
+renderer.domElement.addEventListener('pointerdown',e=>{
+ if(e.pointerType==='touch' || e.button===0){
+  const d=pick(e); if(d){draggingRoute=true;controls.enabled=false;addSegment(d)}
+ }
+});
+renderer.domElement.addEventListener('pointerup',()=>{draggingRoute=false;controls.enabled=true});
+renderer.domElement.addEventListener('pointermove',e=>{
+ if(!draggingRoute)return;
+ const d=pick(e); if(d){addSegment(d);draggingRoute=false;controls.enabled=true}
+});
+
+function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)} animate();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body></html>
