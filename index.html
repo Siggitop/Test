@@ -44,8 +44,15 @@ button.active{background:#2468e8;border-color:#4e8cff}
 <div id="bottom">Tippe auf das Rohrende und ziehe in eine Richtung …</div>
 <div id="hint">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
 
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"
+  }
+}
+</script>
 <script type="module">
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js';
+import * as THREE from 'three';
 import {OrbitControls} from 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js';
 
 const scene=new THREE.Scene();
@@ -72,33 +79,54 @@ const joints=new THREE.Group(); scene.add(joints);
 let current=new THREE.Vector3(-2,1,0), direction=new THREE.Vector3(1,0,0);
 let history=[], selectedMode='straight';
 
+let lastPipeMesh=null, lastPipeStart=null, lastPipeEnd=null;
 function pipeMat(active=false){return new THREE.MeshStandardMaterial({color:active?0x4e9cff:0xb7c6d8,metalness:.65,roughness:.25,emissive:active?0x092b5a:0})}
 function cylinderBetween(a,b,r=.10,active=false){
  const v=new THREE.Vector3().subVectors(b,a), len=v.length(), mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
  const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,20),pipeMat(active));
- m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.normalize()); pipes.add(m); return m;
+ m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize()); pipes.add(m);
+ lastPipeMesh=m; lastPipeStart=a.clone(); lastPipeEnd=b.clone();
+ return m;
 }
-function elbow(center,from,to,r=.10,angle=90){
- const n=from.clone().normalize(), t=to.clone().normalize();
- const perp=new THREE.Vector3().crossVectors(n,t).normalize();
- const radius=r*3.0;
- const p0=center.clone().sub(n.multiplyScalar(radius));
- const p1=center.clone().add(t.multiplyScalar(radius));
- const curve=new THREE.QuadraticBezierCurve3(p0,center.clone(),p1);
+function elbow(pivot,fromDir,toDir,r=.10){
+ const br=r*3.0;
+ const p0=pivot.clone().sub(fromDir.clone().normalize().multiplyScalar(br));
+ const p1=pivot.clone().add(toDir.clone().normalize().multiplyScalar(br));
+ const curve=new THREE.QuadraticBezierCurve3(p0,pivot.clone(),p1);
  const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,18,r,12,false),pipeMat(false));
- pipes.add(tube); return {p0,p1};
+ pipes.add(tube); return {p0,p1,br};
+}
+const CARDINALS=[new THREE.Vector3(1,0,0),new THREE.Vector3(-1,0,0),new THREE.Vector3(0,1,0),new THREE.Vector3(0,-1,0),new THREE.Vector3(0,0,1),new THREE.Vector3(0,0,-1)];
+// Liefert 4 zur aktuellen Rohrrichtung senkrechte Richtungen – per Kreuzprodukt berechnet,
+// funktioniert also auch, wenn "forward" selbst schon diagonal (45°) ist, nicht nur bei Achsenrichtungen.
+function perpDirs(forward){
+ const ref=Math.abs(forward.y)>.9?new THREE.Vector3(1,0,0):new THREE.Vector3(0,1,0);
+ const u=new THREE.Vector3().crossVectors(ref,forward).normalize();
+ const v=new THREE.Vector3().crossVectors(forward,u).normalize();
+ return [u.clone(),u.clone().negate(),v.clone(),v.clone().negate()];
+}
+function handleDirs(){
+ if(history.length===0) return CARDINALS.map(v=>v.clone());
+ if(selectedMode==='straight') return [direction.clone()];
+ const perps=perpDirs(direction);
+ if(selectedMode==='b90') return perps;
+ return perps.map(v=>direction.clone().add(v).normalize());
+}
+// Achsenfarbe: reine X/Y/Z-Richtungen bekommen die klassischen Rot/Grün/Blau-Farben,
+// diagonale 45°-Richtungen eine eigene Akzentfarbe, damit man sie unterscheiden kann.
+function colorFor(v){
+ if(Math.abs(v.x)>.95) return 0xff4e4e;
+ if(Math.abs(v.y)>.95) return 0x59d77b;
+ if(Math.abs(v.z)>.95) return 0x4e9cff;
+ return 0xffa64e;
 }
 function endpointMarker(p,active=true){
  joints.clear();
  const g=new THREE.Group(); g.position.copy(p);
  const s=new THREE.Mesh(new THREE.SphereGeometry(.16,20,20),pipeMat(active));
  g.add(s);
- const axes=[
-  [new THREE.Vector3(1,0,0),0xff4e4e,'X+'],[new THREE.Vector3(-1,0,0),0xff4e4e,'X-'],
-  [new THREE.Vector3(0,1,0),0x59d77b,'Y+'],[new THREE.Vector3(0,-1,0),0x59d77b,'Y-'],
-  [new THREE.Vector3(0,0,1),0x4e9cff,'Z+'],[new THREE.Vector3(0,0,-1),0x4e9cff,'Z-']
- ];
- axes.forEach(([v,c,label])=>{
+ handleDirs().forEach(v=>{
+  const c=colorFor(v);
   const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(.48));
   const m=new THREE.Mesh(new THREE.SphereGeometry(.12,12,12),new THREE.MeshBasicMaterial({color:c}));
   m.userData.dir=v; m.userData.route=true; o.add(m);
@@ -109,26 +137,33 @@ function endpointMarker(p,active=true){
 }
 endpointMarker(current);
 
-function addSegment(dir){
+function addSegment(dir,mode=selectedMode){
+ if(history.length===0) mode='straight';
  const len=1.0; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
- history.push({current:current.clone(),end:end.clone(),mode:selectedMode,dir:dir.clone()});
- if(selectedMode==='straight') cylinderBetween(current,end,.1);
- else {
-   const perp=new THREE.Vector3().crossVectors(direction,dir);
-   if(perp.length()<.1){cylinderBetween(current,end,.1);return}
-   const radius=.30;
-   const center=current.clone().add(direction.clone().normalize().multiplyScalar(radius));
-   const e=elbow(center,direction,dir,.1,selectedMode==='b90'?90:45);
-   cylinderBetween(e.p0,current,.1); cylinderBetween(e.p1,end,.1);
+ history.push({dir:dir.clone(),mode});
+ if(mode==='straight'){
+   cylinderBetween(current,end,.1);
+ } else {
+   // Das zuletzt gezeichnete gerade Stück endet exakt am Knickpunkt und würde sich mit dem
+   // Bogen überlappen (sichtbarer "Sporn"). Deshalb wird es hier um die Bogenlänge gekürzt,
+   // bevor der Bogen gezeichnet wird.
+   if(lastPipeMesh){
+     pipes.remove(lastPipeMesh);
+     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(.30));
+     cylinderBetween(lastPipeStart,trimmedEnd,.1);
+   }
+   const e=elbow(current,direction,dir,.1);
+   cylinderBetween(e.p1,end,.1);
  }
  current.copy(end); direction.copy(dir).normalize(); endpointMarker(current);
 }
-function undo(){if(!history.length)return; pipes.clear(); const h=history.slice(0,-1); history=[]; current=new THREE.Vector3(-2,1,0); direction.set(1,0,0); h.forEach(x=>addSegment(x.dir));}
-function reset(){pipes.clear();history=[];current.set(-2,1,0);direction.set(1,0,0);endpointMarker(current)}
+function undo(){if(!history.length)return; pipes.clear(); lastPipeMesh=null; const h=history.slice(0,-1); history=[]; current=new THREE.Vector3(-2,1,0); direction.set(1,0,0); h.forEach(x=>addSegment(x.dir,x.mode)); endpointMarker(current);}
+function reset(){pipes.clear();lastPipeMesh=null;history=[];current.set(-2,1,0);direction.set(1,0,0);endpointMarker(current)}
 
 ['straight','b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
  selectedMode=id; document.querySelectorAll('#top button').forEach(b=>b.classList.remove('active'));
  document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='straight'?'Gerade':id==='b90'?'Biegung 90°':'Biegung 45°';
+ endpointMarker(current);
 });
 document.getElementById('undo').onclick=undo; document.getElementById('reset').onclick=reset;
 document.getElementById('diam').onchange=e=>document.getElementById('dtext').textContent=e.target.value.replace('Ø ','');
@@ -140,7 +175,7 @@ function pick(e){
  const r=renderer.domElement.getBoundingClientRect();
  const x=(e.clientX-r.left)/r.width*2-1,y=-((e.clientY-r.top)/r.height)*2+1;
  mouse.set(x,y);ray.setFromCamera(mouse,camera);
- const hit=ray.intersectObjects(joints,true).find(x=>x.object.userData.route);
+ const hit=ray.intersectObjects(joints.children,true).find(x=>x.object.userData.route);
  return hit?.object.userData.dir||null;
 }
 renderer.domElement.addEventListener('pointerdown',e=>{
