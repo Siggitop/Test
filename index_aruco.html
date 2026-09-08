@@ -18,6 +18,9 @@ button.active{background:#2468e8;border-color:#4e8cff}
 .row{display:flex;gap:7px;margin-top:8px}.row>*{flex:1}
 #bottom{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;background:rgba(9,17,30,.9);padding:11px 20px;border-radius:12px;border:1px solid #31435e;color:#cbd7e8}
 #hint{position:fixed;left:18px;bottom:18px;z-index:5;color:#aebbd0;font-size:12px}
+#scalebar{position:fixed;left:18px;bottom:46px;z-index:5;display:flex;align-items:center;gap:8px;color:#eef4ff;font-size:12px;font-variant-numeric:tabular-nums}
+#scalebar-track{height:6px;display:flex;align-items:flex-end}
+#scalebar-fill{height:6px;background:#eef4ff;border-left:2px solid #eef4ff;border-right:2px solid #eef4ff;box-sizing:border-box;transition:width .08s linear}
 @media(max-width:700px){#panel{width:220px;right:8px;top:72px;padding:12px}.step{margin:8px 0}.muted{font-size:11px}#top{height:56px}h1{font-size:16px;margin-right:4px}.desktopOnly{display:none}}
 </style>
 </head>
@@ -42,6 +45,7 @@ button.active{background:#2468e8;border-color:#4e8cff}
  <div style="margin-top:14px"><b>Rohrdurchmesser</b><div class="muted" id="dtext">20 mm</div></div><div style="margin-top:14px"><b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div></div>
 </div>
 <div id="bottom">Startpunkt = ArUco-Marker A · X-Achse = Rohrachse · Ziel = Marker B</div>
+<div id="scalebar"><div id="scalebar-track"><div id="scalebar-fill"></div></div><span id="scalebar-label">–</span></div>
 <div id="hint">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
 
 <script type="importmap">
@@ -61,9 +65,8 @@ scene.add(new THREE.HemisphereLight(0xffffff,0x30405a,2.1));
 const dl=new THREE.DirectionalLight(0xffffff,2.2); dl.position.set(4,7,5); scene.add(dl);
 
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.01,100);
-// FIX: Kamera wird hier nur provisorisch positioniert (0,0,0 existiert immer).
-// Die endgültige Position (abhängig von markerA) wird weiter unten gesetzt,
-// NACHDEM markerA/markerB aus markers.json geladen wurden.
+// Kamera wird hier nur provisorisch positioniert (0,0,0 existiert immer).
+// Die endgültige, an den realen Marker-Abstand angepasste Position wird weiter unten gesetzt.
 camera.position.set(3,2.5,4);
 
 const renderer=new THREE.WebGLRenderer({antialias:true});
@@ -72,7 +75,7 @@ renderer.outputColorSpace=THREE.SRGBColorSpace; document.querySelector('#app').a
 
 const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;
-// FIX: controls.target wird ebenfalls erst gesetzt, wenn markerA bekannt ist (siehe unten).
+// controls.target wird ebenfalls erst gesetzt, wenn markerA/markerB bekannt sind (siehe unten).
 
 const grid=new THREE.GridHelper(8,16,0x3b4d66,0x26354a); scene.add(grid);
 const floor=new THREE.Mesh(new THREE.BoxGeometry(8,.08,8),new THREE.MeshStandardMaterial({color:0x182234}));
@@ -115,13 +118,25 @@ function readMarker(m){
 const markerA=readMarker(markerData.markerA);
 const markerB=readMarker(markerData.markerB);
 
-// Realer Abstand der beiden Marker (Meter). Wird genutzt, um Kamera-Framing und
-// Gizmo-Größen an den tatsächlichen Maßstab anzupassen – sonst verschwindet Marker B
-// bei kleinen Abständen (hier: ca. 0.19 m) optisch hinter/in Marker A, weil Kugel-
-// und Pfeilgrößen fest für den Meter-Bereich ausgelegt sind.
+// Realer Abstand der beiden Marker (Meter). Alle interaktiven Elemente (Rohr-Routing-
+// Gizmo, Segmentlänge, Marker-Pfeile) werden proportional dazu skaliert – vorher waren
+// diese Größen fest für den Meter-Bereich ausgelegt (Kugel Ø 32 cm, Griffweite 48 cm,
+// Segmentlänge 1 m) und haben bei wenigen cm Marker-Abstand (hier ca. 18.6 cm) alles
+// verdeckt, inkl. Marker B.
 const markerDist = markerA.position.distanceTo(markerB.position) || 1;
+const UNIT = markerDist;
 
-// Kamera & Controls jetzt korrekt und proportional zum realen Abstand ausrichten.
+const PIPE_R      = THREE.MathUtils.clamp(UNIT*0.07,  0.003, 0.1);
+const SEG_LEN      = THREE.MathUtils.clamp(UNIT*0.55,  0.02,  1.0);
+const ENDPOINT_R   = THREE.MathUtils.clamp(UNIT*0.16,  0.006, 0.16);
+const HANDLE_OFF   = THREE.MathUtils.clamp(UNIT*0.42,  0.015, 0.48);
+const HANDLE_R     = THREE.MathUtils.clamp(UNIT*0.11,  0.004, 0.12);
+const HANDLE_LINE  = HANDLE_OFF*0.65;
+const MARKER_R     = THREE.MathUtils.clamp(UNIT*0.16,  0.01,  0.075);
+const MARKER_ARROW = THREE.MathUtils.clamp(UNIT*0.9,   0.06,  0.55);
+
+// Kamera & Controls proportional zum realen Abstand ausrichten, Blick auf die Mitte
+// zwischen A und B statt nur auf A.
 const camOffsetDir = new THREE.Vector3(3,2.5,4).normalize();
 camera.position.copy(markerA.position).add(camOffsetDir.multiplyScalar(Math.max(markerDist*3, 0.6)));
 const midAB = new THREE.Vector3().addVectors(markerA.position, markerB.position).multiplyScalar(.5);
@@ -140,22 +155,22 @@ let history=[], selectedMode='straight';
 let targetMarker=markerB;
 
 document.getElementById('markerInfo').textContent =
-  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id}`;
+  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm`;
 
 console.log('ArUco Marker A:', markerA);
 console.log('ArUco Marker B:', markerB);
-console.log('A → B Abstand:', markerA.position.distanceTo(markerB.position).toFixed(3), 'm');
+console.log('A → B Abstand:', markerDist.toFixed(3), 'm');
 
 let lastPipeMesh=null, lastPipeStart=null, lastPipeEnd=null;
 function pipeMat(active=false){return new THREE.MeshStandardMaterial({color:active?0x4e9cff:0xb7c6d8,metalness:.65,roughness:.25,emissive:active?0x092b5a:0})}
-function cylinderBetween(a,b,r=.10,active=false){
+function cylinderBetween(a,b,r=PIPE_R,active=false){
  const v=new THREE.Vector3().subVectors(b,a), len=v.length(), mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
  const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,20),pipeMat(active));
  m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize()); pipes.add(m);
  lastPipeMesh=m; lastPipeStart=a.clone(); lastPipeEnd=b.clone();
  return m;
 }
-function elbow(pivot,fromDir,toDir,r=.10){
+function elbow(pivot,fromDir,toDir,r=PIPE_R){
  const br=r*3.0;
  const p0=pivot.clone().sub(fromDir.clone().normalize().multiplyScalar(br));
  const p1=pivot.clone().add(toDir.clone().normalize().multiplyScalar(br));
@@ -199,7 +214,7 @@ function makeArrow(start, dir, length, color){
   ));
 
   const cone=new THREE.Mesh(
-    new THREE.ConeGeometry(.055,.14,12),
+    new THREE.ConeGeometry(Math.max(length*0.1,.008),Math.max(length*0.25,.02),12),
     new THREE.MeshBasicMaterial({color})
   );
   cone.position.copy(dir.clone().multiplyScalar(length));
@@ -216,15 +231,9 @@ function createMarkerVisual(marker, isStart){
   const g=new THREE.Group();
   g.position.copy(marker.position);
 
-  // Gizmo-Größen an den realen Marker-Abstand koppeln (statt fest .075 / .55 m),
-  // sonst ist bei wenigen cm Abstand (hier ca. 18.6 cm) die Kugel größer als die
-  // Strecke selbst und Marker B verschwindet optisch.
-  const sphereR = THREE.MathUtils.clamp(markerDist*0.18, 0.015, 0.075);
-  const arrowLen = THREE.MathUtils.clamp(markerDist*0.9, 0.08, 0.55);
-
   // Marker-Mitte = Rohrende
   const sphere=new THREE.Mesh(
-    new THREE.SphereGeometry(sphereR,16,16),
+    new THREE.SphereGeometry(MARKER_R,16,16),
     new THREE.MeshStandardMaterial({color:isStart?0x4e9cff:0xffa64e})
   );
   g.add(sphere);
@@ -233,7 +242,7 @@ function createMarkerVisual(marker, isStart){
   const xArrow=makeArrow(
     new THREE.Vector3(0,0,0),
     marker.xAxis,
-    arrowLen,
+    MARKER_ARROW,
     isStart?0x4e9cff:0xff4e4e
   );
   g.add(xArrow);
@@ -251,7 +260,7 @@ const targetGuide=new THREE.Line(
     markerA.position.clone(),
     markerB.position.clone()
   ]),
-  new THREE.LineDashedMaterial({color:0x60708a,dashSize:.08,gapSize:.05})
+  new THREE.LineDashedMaterial({color:0x60708a,dashSize:UNIT*0.06,gapSize:UNIT*0.04})
 );
 targetGuide.computeLineDistances();
 scene.add(targetGuide);
@@ -259,14 +268,14 @@ scene.add(targetGuide);
 function endpointMarker(p,active=true){
  joints.clear();
  const g=new THREE.Group(); g.position.copy(p);
- const s=new THREE.Mesh(new THREE.SphereGeometry(.16,20,20),pipeMat(active));
+ const s=new THREE.Mesh(new THREE.SphereGeometry(ENDPOINT_R,20,20),pipeMat(active));
  g.add(s);
  handleDirs().forEach(v=>{
   const c=colorFor(v);
-  const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(.48));
-  const m=new THREE.Mesh(new THREE.SphereGeometry(.12,12,12),new THREE.MeshBasicMaterial({color:c}));
+  const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(HANDLE_OFF));
+  const m=new THREE.Mesh(new THREE.SphereGeometry(HANDLE_R,12,12),new THREE.MeshBasicMaterial({color:c}));
   m.userData.dir=v; m.userData.route=true; o.add(m);
-  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-.32)]),new THREE.LineBasicMaterial({color:c}));
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-HANDLE_LINE)]),new THREE.LineBasicMaterial({color:c}));
   o.add(line); g.add(o);
  });
  joints.add(g);
@@ -275,21 +284,21 @@ endpointMarker(current);
 
 function addSegment(dir,mode=selectedMode){
  if(history.length===0) mode='straight';
- const len=1.0; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
+ const len=SEG_LEN; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
  history.push({dir:dir.clone(),mode});
  if(mode==='straight'){
-   cylinderBetween(current,end,.1);
+   cylinderBetween(current,end,PIPE_R);
  } else {
    // Das zuletzt gezeichnete gerade Stück endet exakt am Knickpunkt und würde sich mit dem
    // Bogen überlappen (sichtbarer "Sporn"). Deshalb wird es hier um die Bogenlänge gekürzt,
-   // bevor der Bogen gezeichnet wird.
+   // bevor der Bogen gezeichnet wird. Trimm-Länge = elbow-Bogenradius (r*3), damit es exakt passt.
    if(lastPipeMesh){
      pipes.remove(lastPipeMesh);
-     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(.30));
-     cylinderBetween(lastPipeStart,trimmedEnd,.1);
+     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(PIPE_R*3));
+     cylinderBetween(lastPipeStart,trimmedEnd,PIPE_R);
    }
-   const e=elbow(current,direction,dir,.1);
-   cylinderBetween(e.p1,end,.1);
+   const e=elbow(current,direction,dir,PIPE_R);
+   cylinderBetween(e.p1,end,PIPE_R);
  }
  current.copy(end); direction.copy(dir).normalize(); endpointMarker(current);
 }
@@ -342,8 +351,42 @@ renderer.domElement.addEventListener('pointermove',e=>{
  const d=pick(e); if(d){addSegment(d);draggingRoute=false;controls.enabled=true}
 });
 
-function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)} animate();
+// --- Maßstabsleiste (wie bei Kartendiensten): zeigt immer einen "schönen" Referenzwert
+// (z.B. 5 cm / 10 cm / 20 cm / 1 m) passend zum aktuellen Kamera-Zoom an, damit man jederzeit
+// weiß, in welchem realen Größenbereich man sich gerade bewegt.
+const scalebarFill = document.getElementById('scalebar-fill');
+const scalebarLabel = document.getElementById('scalebar-label');
+function niceScale(raw){
+  const exp = Math.floor(Math.log10(raw));
+  const base = raw / Math.pow(10, exp);
+  let niceBase;
+  if(base < 1.5) niceBase = 1;
+  else if(base < 3.5) niceBase = 2;
+  else if(base < 7.5) niceBase = 5;
+  else niceBase = 10;
+  return niceBase * Math.pow(10, exp);
+}
+function formatLen(m){
+  if(m < 1) return (m*100).toFixed(m<0.1?1:0) + ' cm';
+  return m.toFixed(m<10?2:1) + ' m';
+}
+function updateScaleBar(){
+  const dist = camera.position.distanceTo(controls.target);
+  const vFovRad = camera.fov * Math.PI/180;
+  const worldHeight = 2*dist*Math.tan(vFovRad/2);
+  const h = renderer.domElement.clientHeight || 1;
+  const worldPerPixel = worldHeight / h;
+  const targetPx = 90;
+  const rawWorld = targetPx*worldPerPixel;
+  const niceWorld = niceScale(rawWorld);
+  const px = niceWorld/worldPerPixel;
+  scalebarFill.style.width = Math.max(px,2)+'px';
+  scalebarLabel.textContent = formatLen(niceWorld);
+}
+
+function animate(){requestAnimationFrame(animate);controls.update();updateScaleBar();renderer.render(scene,camera)} animate();
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 </script>
 </body></html>
+
 
