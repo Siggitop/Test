@@ -61,14 +61,18 @@ scene.add(new THREE.HemisphereLight(0xffffff,0x30405a,2.1));
 const dl=new THREE.DirectionalLight(0xffffff,2.2); dl.position.set(4,7,5); scene.add(dl);
 
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.01,100);
-camera.position.copy(markerA.position).add(new THREE.Vector3(3,2.5,4));
+// FIX: Kamera wird hier nur provisorisch positioniert (0,0,0 existiert immer).
+// Die endgültige Position (abhängig von markerA) wird weiter unten gesetzt,
+// NACHDEM markerA/markerB aus markers.json geladen wurden.
+camera.position.set(3,2.5,4);
 
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace; document.querySelector('#app').appendChild(renderer.domElement);
 
 const controls=new OrbitControls(camera,renderer.domElement);
-controls.enableDamping=true; controls.target.copy(markerA.position);
+controls.enableDamping=true;
+// FIX: controls.target wird ebenfalls erst gesetzt, wenn markerA bekannt ist (siehe unten).
 
 const grid=new THREE.GridHelper(8,16,0x3b4d66,0x26354a); scene.add(grid);
 const floor=new THREE.Mesh(new THREE.BoxGeometry(8,.08,8),new THREE.MeshStandardMaterial({color:0x182234}));
@@ -110,6 +114,11 @@ function readMarker(m){
 
 const markerA=readMarker(markerData.markerA);
 const markerB=readMarker(markerData.markerB);
+
+// FIX: Jetzt, wo markerA feststeht, Kamera & Controls korrekt ausrichten.
+camera.position.copy(markerA.position).add(new THREE.Vector3(3,2.5,4));
+controls.target.copy(markerA.position);
+controls.update();
 
 // Die Marker-Mitten sind die Rohrenden.
 // Die X-Achse von A zeigt aus A heraus in Rohrrichtung.
@@ -213,12 +222,6 @@ function createMarkerVisual(marker, isStart){
   );
   g.add(xArrow);
 
-  // Y/Z-Achsen zur Kontrolle der Markerorientierung
-  const yAxis=new THREE.Vector3(0,1,0);
-  const zAxis=new THREE.Vector3(0,0,1);
-  // Die Darstellung von Y/Z ist relativ zur lokalen Markerrotation
-  // nicht verfügbar, wenn nur xAxis übertragen wird. Daher zeigen wir
-  // bewusst nur die definierte Rohr-X-Achse.
   markers.add(g);
 }
 
