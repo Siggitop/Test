@@ -77,10 +77,6 @@ const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true;
 // controls.target wird ebenfalls erst gesetzt, wenn markerA/markerB bekannt sind (siehe unten).
 
-const grid=new THREE.GridHelper(8,16,0x3b4d66,0x26354a); scene.add(grid);
-const floor=new THREE.Mesh(new THREE.BoxGeometry(8,.08,8),new THREE.MeshStandardMaterial({color:0x182234}));
-floor.position.y=-.04; scene.add(floor);
-
 const pipes=new THREE.Group(); scene.add(pipes);
 const joints=new THREE.Group(); scene.add(joints);
 const markers=new THREE.Group(); scene.add(markers);
@@ -145,6 +141,34 @@ controls.minDistance = markerDist*0.3;
 controls.maxDistance = markerDist*30;
 controls.update();
 
+// Rekonstruierte Tischebene aus den Markerdaten: Die Verbindungslinie A→B liegt auf dem
+// Tisch, und die X-Achse eines flachen ArUco-Markers liegt immer in dessen eigener Ebene.
+// Aus dem Kreuzprodukt von A→B mit jeder der beiden X-Achsen ergibt sich je eine Tisch-
+// normale – stimmen beide (nahezu) überein, liegen die Marker wirklich in einer Ebene.
+const abDir = new THREE.Vector3().subVectors(markerB.position, markerA.position).normalize();
+const rawN1 = new THREE.Vector3().crossVectors(abDir, markerA.xAxis).normalize();
+const rawN2 = new THREE.Vector3().crossVectors(abDir, markerB.xAxis).normalize();
+let planeAngleDeg = THREE.MathUtils.radToDeg(rawN1.angleTo(rawN2));
+if(planeAngleDeg>90) planeAngleDeg = 180-planeAngleDeg;
+const n2aligned = rawN1.dot(rawN2) < 0 ? rawN2.clone().negate() : rawN2.clone();
+const tableNormal = new THREE.Vector3().addVectors(rawN1, n2aligned).normalize();
+console.log('Ebenen-Konsistenz A/B:', planeAngleDeg.toFixed(2), '° Abweichung (0° = perfekt koplanar)');
+
+// Referenzraster + halbtransparente Ebene, ausgerichtet auf die rekonstruierte Tischebene
+// (statt eines beliebigen globalen XZ-Grids, das nichts mit dem echten Tisch zu tun hat).
+const planeSize = Math.max(markerDist*6, 0.3);
+const tableGrid = new THREE.GridHelper(planeSize,16,0x3b4d66,0x26354a);
+tableGrid.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tableNormal);
+tableGrid.position.copy(midAB);
+scene.add(tableGrid);
+const tablePlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(planeSize,planeSize),
+  new THREE.MeshBasicMaterial({color:0x182234,transparent:true,opacity:.35,side:THREE.DoubleSide})
+);
+tablePlane.quaternion.copy(tableGrid.quaternion);
+tablePlane.position.copy(midAB);
+scene.add(tablePlane);
+
 // Die Marker-Mitten sind die Rohrenden.
 // Die X-Achse von A zeigt aus A heraus in Rohrrichtung.
 // Bei B zeigt -X zum Rohr hin.
@@ -155,7 +179,7 @@ let history=[], selectedMode='straight';
 let targetMarker=markerB;
 
 document.getElementById('markerInfo').textContent =
-  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm`;
+  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm · Ebenenabw. ${planeAngleDeg.toFixed(1)}°`;
 
 console.log('ArUco Marker A:', markerA);
 console.log('ArUco Marker B:', markerB);
