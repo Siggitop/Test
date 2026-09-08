@@ -98,17 +98,20 @@ try {
 } catch(err) {
   console.error('markers.json konnte nicht geladen werden:', err);
   markerData = {
-    markerA:{id:'A',position:{x:0,y:0,z:0},xAxis:{x:1,y:0,z:0}},
-    markerB:{id:'B',position:{x:2,y:0,z:0},xAxis:{x:-1,y:0,z:0}}
+    markerA:{id:'A',position:{x:0,y:0,z:0},xAxis:{x:1,y:0,z:0},yAxis:{x:0,y:1,z:0},zAxis:{x:0,y:0,z:1}},
+    markerB:{id:'B',position:{x:2,y:0,z:0},xAxis:{x:-1,y:0,z:0},yAxis:{x:0,y:1,z:0},zAxis:{x:0,y:0,z:-1}}
   };
 }
 
 function readMarker(m){
-  return {
+  const out = {
     id:m.id,
     position:cvToThree(m.position),
     xAxis:cvToThree(m.xAxis).normalize()
   };
+  if(m.yAxis) out.yAxis = cvToThree(m.yAxis).normalize();
+  if(m.zAxis) out.zAxis = cvToThree(m.zAxis).normalize();
+  return out;
 }
 
 const markerA=readMarker(markerData.markerA);
@@ -262,16 +265,20 @@ function createMarkerVisual(marker, isStart){
   );
   g.add(sphere);
 
-  // Lokale X-Achse des ArUco-Markers = Rohranschlussachse.
-  // Es wird bewusst NUR die X-Achse gezeichnet (keine Y/Z-Achse), und zwar immer in Rot,
-  // unabhängig davon ob es Marker A oder B ist – analog zu OpenCVs drawFrameAxes-Konvention.
-  const xArrow=makeArrow(
-    new THREE.Vector3(0,0,0),
-    marker.xAxis,
-    MARKER_ARROW,
-    0xff0000
-  );
-  g.add(xArrow);
+  // Alle 3 lokalen Achsen wie im OpenCV-Referenzbild (drawFrameAxes-Konvention):
+  // X = Rot, Y = Grün, Z = Blau. Y/Z werden nur gezeichnet, wenn sie in markers.json
+  // vorhanden sind (siehe readMarker) – sonst Warnung in der Konsole.
+  g.add(makeArrow(new THREE.Vector3(0,0,0), marker.xAxis, MARKER_ARROW, 0xff0000));
+  if(marker.yAxis){
+    g.add(makeArrow(new THREE.Vector3(0,0,0), marker.yAxis, MARKER_ARROW, 0x00ff00));
+  } else {
+    console.warn(`Marker ${marker.id}: yAxis fehlt in markers.json – wird nicht gezeichnet.`);
+  }
+  if(marker.zAxis){
+    g.add(makeArrow(new THREE.Vector3(0,0,0), marker.zAxis, MARKER_ARROW, 0x0000ff));
+  } else {
+    console.warn(`Marker ${marker.id}: zAxis fehlt in markers.json – wird nicht gezeichnet.`);
+  }
 
   markers.add(g);
 }
