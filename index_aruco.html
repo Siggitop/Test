@@ -238,12 +238,14 @@ function createMarkerVisual(marker, isStart){
   );
   g.add(sphere);
 
-  // Lokale X-Achse des ArUco-Markers = Rohranschlussachse
+  // Lokale X-Achse des ArUco-Markers = Rohranschlussachse.
+  // Es wird bewusst NUR die X-Achse gezeichnet (keine Y/Z-Achse), und zwar immer in Rot,
+  // unabhängig davon ob es Marker A oder B ist – analog zu OpenCVs drawFrameAxes-Konvention.
   const xArrow=makeArrow(
     new THREE.Vector3(0,0,0),
     marker.xAxis,
     MARKER_ARROW,
-    isStart?0x4e9cff:0xff4e4e
+    0xff0000
   );
   g.add(xArrow);
 
@@ -388,5 +390,6 @@ function animate(){requestAnimationFrame(animate);controls.update();updateScaleB
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 </script>
 </body></html>
+
 
 
