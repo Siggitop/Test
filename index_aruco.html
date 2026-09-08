@@ -115,9 +115,19 @@ function readMarker(m){
 const markerA=readMarker(markerData.markerA);
 const markerB=readMarker(markerData.markerB);
 
-// FIX: Jetzt, wo markerA feststeht, Kamera & Controls korrekt ausrichten.
-camera.position.copy(markerA.position).add(new THREE.Vector3(3,2.5,4));
-controls.target.copy(markerA.position);
+// Realer Abstand der beiden Marker (Meter). Wird genutzt, um Kamera-Framing und
+// Gizmo-Größen an den tatsächlichen Maßstab anzupassen – sonst verschwindet Marker B
+// bei kleinen Abständen (hier: ca. 0.19 m) optisch hinter/in Marker A, weil Kugel-
+// und Pfeilgrößen fest für den Meter-Bereich ausgelegt sind.
+const markerDist = markerA.position.distanceTo(markerB.position) || 1;
+
+// Kamera & Controls jetzt korrekt und proportional zum realen Abstand ausrichten.
+const camOffsetDir = new THREE.Vector3(3,2.5,4).normalize();
+camera.position.copy(markerA.position).add(camOffsetDir.multiplyScalar(Math.max(markerDist*3, 0.6)));
+const midAB = new THREE.Vector3().addVectors(markerA.position, markerB.position).multiplyScalar(.5);
+controls.target.copy(midAB);
+controls.minDistance = markerDist*0.3;
+controls.maxDistance = markerDist*30;
 controls.update();
 
 // Die Marker-Mitten sind die Rohrenden.
@@ -206,9 +216,15 @@ function createMarkerVisual(marker, isStart){
   const g=new THREE.Group();
   g.position.copy(marker.position);
 
+  // Gizmo-Größen an den realen Marker-Abstand koppeln (statt fest .075 / .55 m),
+  // sonst ist bei wenigen cm Abstand (hier ca. 18.6 cm) die Kugel größer als die
+  // Strecke selbst und Marker B verschwindet optisch.
+  const sphereR = THREE.MathUtils.clamp(markerDist*0.18, 0.015, 0.075);
+  const arrowLen = THREE.MathUtils.clamp(markerDist*0.9, 0.08, 0.55);
+
   // Marker-Mitte = Rohrende
   const sphere=new THREE.Mesh(
-    new THREE.SphereGeometry(.075,16,16),
+    new THREE.SphereGeometry(sphereR,16,16),
     new THREE.MeshStandardMaterial({color:isStart?0x4e9cff:0xffa64e})
   );
   g.add(sphere);
@@ -217,7 +233,7 @@ function createMarkerVisual(marker, isStart){
   const xArrow=makeArrow(
     new THREE.Vector3(0,0,0),
     marker.xAxis,
-    .55,
+    arrowLen,
     isStart?0x4e9cff:0xff4e4e
   );
   g.add(xArrow);
@@ -330,3 +346,4 @@ function animate(){requestAnimationFrame(animate);controls.update();renderer.ren
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 </script>
 </body></html>
+
