@@ -28,11 +28,13 @@ button.active{background:#2468e8;border-color:#4e8cff}
 <div id="app"></div>
 <div id="top">
  <span class="logo">⌁</span><h1>RohrRouting</h1>
- <button id="straight" class="active">Gerade</button>
- <button id="b90">Biegung 90°</button>
- <button id="b45">Biegung 45°</button>
+ <button id="b90" class="modebtn active">Biegung 90°</button>
+ <button id="b45" class="modebtn">Biegung 45°</button>
  <select id="diam"><option>Ø 20 mm</option><option>Ø 25 mm</option><option>Ø 32 mm</option><option>Ø 40 mm</option></select>
  <button id="undo">↶</button><button id="reset">Neu</button>
+ <span style="flex:1"></span>
+ <button id="toggleGizmo" class="active" title="Routing-Gizmo ein-/ausblenden">Gizmo</button>
+ <button id="togglePanel" class="active" title="Anleitung ein-/ausblenden">Anleitung</button>
 </div>
 <div id="panel">
  <h2>Rohr verlegen</h2>
@@ -41,7 +43,7 @@ button.active{background:#2468e8;border-color:#4e8cff}
  <div class="step"><span class="num">3</span><div><b>Segment erstellen</b><div class="muted">Gerade, 90° oder 45° wird automatisch erzeugt.</div></div></div>
  <hr style="border:0;border-top:1px solid #31435e">
  <b>Aktueller Modus</b>
- <div class="row"><button id="mode">Gerade</button></div>
+ <div class="row"><button id="mode">Biegung 90°</button></div>
  <div style="margin-top:14px"><b>Rohrdurchmesser</b><div class="muted" id="dtext">20 mm</div></div><div style="margin-top:14px"><b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div></div>
 </div>
 <div id="bottom">Startpunkt = ArUco-Marker A · X-Achse = Rohrachse · Ziel = Marker B</div>
@@ -178,7 +180,7 @@ scene.add(tablePlane);
 let current=markerA.position.clone();
 let direction=markerA.xAxis.clone();
 
-let history=[], selectedMode='straight';
+let history=[], selectedMode='b90';
 let targetMarker=markerB;
 
 document.getElementById('markerInfo').textContent =
@@ -215,11 +217,22 @@ function perpDirs(forward){
  return [u.clone(),u.clone().negate(),v.clone(),v.clone().negate()];
 }
 function handleDirs(){
- if(history.length===0) return CARDINALS.map(v=>v.clone());
- if(selectedMode==='straight') return [direction.clone()];
- const perps=perpDirs(direction);
- if(selectedMode==='b90') return perps;
- return perps.map(v=>direction.clone().add(v).normalize());
+ // Gerade weiter in der aktuellen Achsrichtung ist immer verfügbar -
+ // unabhängig vom gewählten Biegungsmodus (kein eigener "Gerade"-Modus mehr nötig).
+ const dirs=[direction.clone()];
+ if(history.length===0){
+   // Vor dem ersten Segment gibt es noch keine "Vorzugsrichtung" -
+   // zusätzlich alle 6 Welt-Achsen als Startrichtung anbieten.
+   CARDINALS.forEach(v=>dirs.push(v.clone()));
+ } else if(selectedMode==='b90'){
+   dirs.push(...perpDirs(direction));
+ } else {
+   dirs.push(...perpDirs(direction).map(v=>direction.clone().add(v).normalize()));
+ }
+ // Duplikate entfernen (z.B. falls die Marker-Achse zufällig mit einer Weltachse zusammenfällt).
+ const out=[];
+ dirs.forEach(d=>{ if(!out.some(o=>o.dot(d)>0.98)) out.push(d); });
+ return out;
 }
 // Achsenfarbe: reine X/Y/Z-Richtungen bekommen die klassischen Rot/Grün/Blau-Farben,
 // diagonale 45°-Richtungen eine eigene Akzentfarbe, damit man sie unterscheiden kann.
@@ -315,7 +328,13 @@ function endpointMarker(p,active=true){
 }
 endpointMarker(current);
 
-function addSegment(dir,mode=selectedMode){
+function addSegment(dir,mode){
+ if(mode===undefined){
+   // Zeigt der gewählte Griff in dieselbe Richtung wie die aktuelle Rohrachse?
+   // Dann ist es eine gerade Fortsetzung, sonst eine Biegung im gewählten Modus.
+   const isContinue = history.length>0 && dir.clone().normalize().dot(direction.clone().normalize())>0.999;
+   mode = isContinue ? 'straight' : selectedMode;
+ }
  if(history.length===0) mode='straight';
  const len=SEG_LEN; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
  history.push({dir:dir.clone(),mode});
@@ -355,14 +374,31 @@ function reset(){
   endpointMarker(current);
 }
 
-['straight','b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
- selectedMode=id; document.querySelectorAll('#top button').forEach(b=>b.classList.remove('active'));
- document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='straight'?'Gerade':id==='b90'?'Biegung 90°':'Biegung 45°';
+['b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
+ selectedMode=id; document.querySelectorAll('#top button.modebtn').forEach(b=>b.classList.remove('active'));
+ document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='b90'?'Biegung 90°':'Biegung 45°';
  endpointMarker(current);
 });
 document.getElementById('undo').onclick=undo; document.getElementById('reset').onclick=reset;
 document.getElementById('diam').onchange=e=>document.getElementById('dtext').textContent=e.target.value.replace('Ø ','');
 document.getElementById('mode').onclick=()=>document.getElementById(selectedMode).click();
+
+// Gizmo (die Routing-Griffe am aktiven Rohrende) ein-/ausblenden - z.B. um freie Sicht
+// auf das bisher verlegte Rohr zu haben, ohne die Griffe im Weg zu haben.
+const toggleGizmoBtn=document.getElementById('toggleGizmo');
+toggleGizmoBtn.onclick=()=>{
+ joints.visible=!joints.visible;
+ toggleGizmoBtn.classList.toggle('active',joints.visible);
+};
+
+// Anleitungs-/Info-Panel rechts ein-/ausblenden.
+const panelEl=document.getElementById('panel');
+const togglePanelBtn=document.getElementById('togglePanel');
+togglePanelBtn.onclick=()=>{
+ const visible=panelEl.style.display==='none';
+ panelEl.style.display=visible?'':'none';
+ togglePanelBtn.classList.toggle('active',visible);
+};
 
 const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
 let draggingRoute=false,lastTouch=null;
