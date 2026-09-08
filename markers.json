@@ -1,15 +1,15 @@
 {
   "coordinateSystem": {
-    "origin": "markerA",
+    "origin": "camera",
     "unit": "meter",
-    "description": "Marker A bildet den Ursprung. Alle Positionen und Achsen von Marker B sind relativ zu Marker A angegeben."
+    "description": "Ursprung ist die Kamera zum Aufnahmezeitpunkt. Alle Positionen und Achsen von Marker A und B sind in Kamerakoordinaten angegeben."
   },
   "markerA": {
     "id": 0,
     "position": {
-      "x": 0.0,
-      "y": 0.0,
-      "z": 0.0
+      "x": 0.04461062035603252,
+      "y": 0.02900956732422717,
+      "z": 0.43028104831339503
     },
     "xAxis": {
       "x": -0.9983426312099353,
@@ -30,24 +30,24 @@
   "markerB": {
     "id": 1,
     "position": {
-      "x": 0.1286517577473994,
-      "y": -0.13462160424755243,
-      "z": -0.0009951099499909688
+      "x": -0.08120269411723444,
+      "y": -0.09274412716148156,
+      "z": 0.4937025677356249
     },
     "xAxis": {
-      "x": 0.7096214369640501,
-      "y": -0.7044173471009301,
-      "z": 0.01528454462405717
+      "x": -0.6936021386750519,
+      "y": -0.6489084163310888,
+      "z": 0.3127841754949767
     },
     "yAxis": {
-      "x": 0.7045521200358857,
-      "y": 0.7096267941110698,
-      "z": -0.006010260608696035
+      "x": -0.7178304686091901,
+      "y": 0.5862698829226771,
+      "z": -0.37550904478339964
     },
     "zAxis": {
-      "x": -0.006612590567654443,
-      "y": 0.015033768088333637,
-      "z": 0.9998651206353039
+      "x": 0.060295037620889676,
+      "y": -0.48497988782269025,
+      "z": -0.8724442772153339
     }
   }
 }
