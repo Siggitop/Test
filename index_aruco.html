@@ -35,6 +35,7 @@ button.active{background:#2468e8;border-color:#4e8cff}
  <span style="flex:1"></span>
  <button id="toggleGizmo" class="active" title="Routing-Gizmo ein-/ausblenden">Gizmo</button>
  <button id="togglePanel" class="active" title="Anleitung ein-/ausblenden">Anleitung</button>
+ <button id="toggleCamView" title="Blick aus Sicht der Aufnahme-Kamera (wie im OpenCV-Eingangsbild)">📷 Kamera-Sicht</button>
 </div>
 <div id="panel">
  <h2>Rohr verlegen</h2>
@@ -400,6 +401,47 @@ togglePanelBtn.onclick=()=>{
  togglePanelBtn.classList.toggle('active',visible);
 };
 
+// --- Original-Kamera-Perspektive -----------------------------------------
+// markers.json definiert den Ursprung des Koordinatensystems ausdrücklich als
+// "die Kamera zum Aufnahmezeitpunkt" (siehe coordinateSystem.origin). Die Kamera
+// selbst saß dort also im Ursprung (0,0,0) und blickte "geradeaus" entlang ihrer
+// eigenen optischen Achse - in OpenCV-Konvention ist das +Z (X rechts, Y runter,
+// Z von der Kamera weg ins Bild). cvToThree() rechnet das um in x, -y, -z.
+// Damit landet die OpenCV-Blickrichtung (0,0,1) exakt auf Three.js' (0,0,-1) -
+// und das ist zufällig genau die Default-Blickrichtung einer Three.js-Kamera mit
+// Identity-Rotation (Forward = -Z, Up = +Y). Die OpenCV-"Oben"-Richtung (0,-1,0,
+// weil Y nach unten zeigt) landet ebenso exakt auf Three.js' (0,1,0) = Standard-Up.
+// Kurz: Kamera an den Ursprung, Rotation zurücksetzen - fertig, keine Trigonometrie
+// nötig. Was NICHT exakt stimmt: das Field-of-View (55°) ist nur ein Platzhalter,
+// nicht das echte Objektiv/Sensor-FOV aus der OpenCV-Kalibrierung - die Richtungen
+// zu den Markern stimmen exakt, die Bildausschnitt-"Enge" kann leicht abweichen.
+let inCameraView=false;
+const savedCamPos=new THREE.Vector3(), savedCamQuat=new THREE.Quaternion(), savedTarget=new THREE.Vector3();
+const toggleCamViewBtn=document.getElementById('toggleCamView');
+function setControlsEnabled(en){ controls.enabled = en && !inCameraView; }
+toggleCamViewBtn.onclick=()=>{
+ inCameraView=!inCameraView;
+ toggleCamViewBtn.classList.toggle('active',inCameraView);
+ if(inCameraView){
+  savedCamPos.copy(camera.position);
+  savedCamQuat.copy(camera.quaternion);
+  savedTarget.copy(controls.target);
+  camera.position.set(0,0,0);
+  camera.up.set(0,1,0);
+  camera.quaternion.identity();
+  camera.updateMatrixWorld();
+  controls.enabled=false;
+  document.getElementById('hint').textContent='Original-Kamera-Perspektive · Orbit deaktiviert · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
+ } else {
+  camera.position.copy(savedCamPos);
+  camera.quaternion.copy(savedCamQuat);
+  controls.target.copy(savedTarget);
+  controls.enabled=true;
+  controls.update();
+  document.getElementById('hint').textContent='Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
+ }
+};
+
 const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
 let draggingRoute=false,lastTouch=null;
 function pick(e){
@@ -411,13 +453,13 @@ function pick(e){
 }
 renderer.domElement.addEventListener('pointerdown',e=>{
  if(e.pointerType==='touch' || e.button===0){
-  const d=pick(e); if(d){draggingRoute=true;controls.enabled=false;addSegment(d)}
+  const d=pick(e); if(d){draggingRoute=true;setControlsEnabled(false);addSegment(d)}
  }
 });
-renderer.domElement.addEventListener('pointerup',()=>{draggingRoute=false;controls.enabled=true});
+renderer.domElement.addEventListener('pointerup',()=>{draggingRoute=false;setControlsEnabled(true)});
 renderer.domElement.addEventListener('pointermove',e=>{
  if(!draggingRoute)return;
- const d=pick(e); if(d){addSegment(d);draggingRoute=false;controls.enabled=true}
+ const d=pick(e); if(d){addSegment(d);draggingRoute=false;setControlsEnabled(true)}
 });
 
 // --- Maßstabsleiste (wie bei Kartendiensten): zeigt immer einen "schönen" Referenzwert
@@ -453,7 +495,7 @@ function updateScaleBar(){
   scalebarLabel.textContent = formatLen(niceWorld);
 }
 
-function animate(){requestAnimationFrame(animate);controls.update();updateScaleBar();renderer.render(scene,camera)} animate();
+function animate(){requestAnimationFrame(animate);if(!inCameraView)controls.update();updateScaleBar();renderer.render(scene,camera)} animate();
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 </script>
 </body></html>
