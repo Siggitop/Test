@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#111827">
+<title>RohrRouting – Kamera & 3D</title>
+<style>
+:root{
+  --bg:#0b1020;--panel:#111827;--panel2:#182235;--text:#f3f4f6;
+  --muted:#9ca3af;--accent:#38bdf8;--ok:#34d399;--warn:#fbbf24;--bad:#fb7185;
+  --border:#263247;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{overflow:hidden}
+button,input{font:inherit}
+button{border:1px solid var(--border);background:var(--panel2);color:var(--text);
+  border-radius:12px;padding:11px 14px;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+.primary{background:var(--accent);color:#06131b;border-color:var(--accent);font-weight:700}
+.green{background:var(--ok);color:#062016;border-color:var(--ok);font-weight:700}
+.danger{background:transparent;color:var(--bad);border-color:#5b2632}
+#app{height:100%;display:grid;grid-template-rows:auto 1fr}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;
+  border-bottom:1px solid var(--border);background:rgba(11,16,32,.96);z-index:5}
+.logo{font-size:24px}.title{font-weight:800;margin-right:auto}
+header .small{font-size:12px;color:var(--muted)}
+main{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:12px;padding:12px}
+#stage{position:relative;min-width:0;min-height:0;border:1px solid var(--border);
+  border-radius:16px;overflow:hidden;background:#050814}
+#video,#photo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050814}
+#photo{display:none}
+#three{position:absolute;inset:0;display:none}
+#overlay{position:absolute;inset:0;pointer-events:none}
+.cross{position:absolute;left:50%;top:50%;width:26px;height:26px;transform:translate(-50%,-50%);
+  border:1px solid rgba(255,255,255,.65);border-radius:50%}
+.cross:before,.cross:after{content:"";position:absolute;background:rgba(255,255,255,.65)}
+.cross:before{left:50%;top:-7px;width:1px;height:40px}.cross:after{top:50%;left:-7px;width:40px;height:1px}
+#message{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);
+  background:rgba(0,0,0,.72);padding:9px 13px;border-radius:10px;font-size:13px;white-space:nowrap}
+#side{background:var(--panel);border:1px solid var(--border);border-radius:16px;
+  padding:16px;overflow:auto}
+h2{font-size:18px;margin:0 0 12px}
+.section{border-top:1px solid var(--border);padding-top:14px;margin-top:14px}
+.status{display:flex;gap:9px;align-items:flex-start;margin:8px 0;font-size:13px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);margin-top:5px;flex:none}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+.muted{color:var(--muted);font-size:12px;line-height:1.45}
+.row{display:flex;gap:8px;margin-top:8px}.row>*{flex:1}
+#file{display:none}
+.marker{display:grid;grid-template-columns:1fr auto;gap:4px;padding:8px 0;
+  border-bottom:1px solid var(--border);font-size:13px}
+#loading{position:absolute;inset:0;display:none;place-items:center;background:rgba(0,0,0,.55);z-index:10}
+.spinner{width:38px;height:38px;border:4px solid #ffffff33;border-top-color:var(--accent);
+  border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+#cvScript{display:none}
+@media(max-width:850px){
+  header{flex-wrap:wrap}.title{margin-right:0}
+  header .small{width:100%}
+  main{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
+  #side{max-height:38vh}
+}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <span class="logo">🔧</span><span class="title">RohrRouting</span>
+  <button id="start" class="primary">Kamera starten</button>
+  <button id="capture" disabled>Bild aufnehmen</button>
+  <label for="file"><button type="button" id="fileBtn">Bild auswählen</button></label>
+  <button id="analyze" class="green" disabled>Analysieren</button>
+  <button id="reset" class="danger">Zurücksetzen</button>
+  <span class="small" id="secure"></span>
+</header>
+
+<main>
+<section id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <img id="photo" alt="Aufgenommenes Bild">
+  <div id="three"></div>
+  <div id="overlay"><div class="cross"></div></div>
+  <div id="message">Kamera noch nicht gestartet</div>
+  <div id="loading"><div><div class="spinner"></div><div style="margin-top:10px">Analyse läuft …</div></div></div>
+</section>
+
+<aside id="side">
+  <h2>Status</h2>
+  <div class="status"><span id="camDot" class="dot"></span><div><b>Kamera</b><div id="camStatus" class="muted">Nicht gestartet</div></div></div>
+  <div class="status"><span id="cvDot" class="dot"></span><div><b>OpenCV</b><div id="cvStatus" class="muted">Wird optional geladen …</div></div></div>
+
+  <div class="section">
+    <b>Bild</b>
+    <div id="imageStatus" class="muted">Noch kein Bild vorhanden.</div>
+    <div class="row">
+      <button id="retake" disabled>Neues Bild</button>
+      <button id="download" disabled>Bild speichern</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <b>ArUco-Marker</b>
+    <div class="muted" style="margin:5px 0 8px">DICT_4X4_50 · Markergröße 50 mm</div>
+    <div id="markers">Keine Analyse durchgeführt.</div>
+  </div>
+
+  <div class="section">
+    <b>Kamerakalibrierung</b>
+    <div class="muted">Optional: Brennweite und Verzerrung eingeben. Ohne Kalibrierung wird eine Näherung aus der Bildgröße verwendet.</div>
+    <div class="row">
+      <input id="focal" type="number" min="100" step="10" placeholder="Brennweite px">
+      <input id="markerSize" type="number" min="1" step="1" value="50" placeholder="Marker mm">
+    </div>
+    <div class="row">
+      <input id="dist1" type="number" step="0.001" value="0" placeholder="k1">
+      <input id="dist2" type="number" step="0.001" value="0" placeholder="k2">
+    </div>
+  </div>
+
+  <div class="section">
+    <b>3D / Routing</b>
+    <div id="route" class="muted">Nach der Analyse werden erkannte Marker im Kamerakoordinatensystem dargestellt.</div>
+    <div class="row">
+      <button id="show2d">2D</button>
+      <button id="show3d" disabled>3D</button>
+    </div>
+  </div>
+
+  <div class="section muted">
+    <b>Wichtig bei Problemen</b><br>
+    Kamera funktioniert im Browser nur über <b>HTTPS</b> oder <b>localhost</b>. Beim direkten Öffnen
+    einer HTML-Datei mit <code>file://</code> blockieren Browser die Kamera häufig.
+    „Bild auswählen“ ist deshalb der zuverlässige Fallback.
+  </div>
+</aside>
+</main>
+
+<input id="file" type="file" accept="image/*" capture="environment">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+const video=$("video"), photo=$("photo"), file=$("file"), stage=$("stage");
+let stream=null, capturedDataUrl=null, cvReady=false, markers=[];
+let threeScene, threeCamera, threeRenderer, threeGroup;
+
+$("secure").textContent = location.protocol==="https:" || location.hostname==="localhost"
+  ? "sicherer Kontext" : "kein HTTPS/localhost";
+
+function setStatus(dot, text, state=""){
+  $(dot).className="dot "+state;
+  $(text).textContent=text;
+}
+function message(t){$("message").textContent=t}
+
+async function startCamera(){
+  if(!navigator.mediaDevices?.getUserMedia){
+    setStatus("camDot","camStatus","Kamera-API nicht verfügbar","bad");
+    message("Kamera-API nicht verfügbar – Bild auswählen");
+    return false;
+  }
+  try{
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream=await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}
+    });
+    video.srcObject=stream;
+    await video.play();
+    video.style.display="block"; photo.style.display="none";
+    $("capture").disabled=false;
+    $("retake").disabled=false;
+    setStatus("camDot","camStatus","Kamera aktiv","ok");
+    message("Kamera aktiv");
+    return true;
+  }catch(e){
+    console.error(e);
+    let reason = e.name==="NotAllowedError" ? "Berechtigung verweigert" :
+                 e.name==="NotFoundError" ? "Keine Kamera gefunden" :
+                 e.name==="NotReadableError" ? "Kamera wird bereits verwendet" :
+                 "Kamera konnte nicht geöffnet werden";
+    setStatus("camDot","camStatus",reason+" – Bild auswählen","bad");
+    message(reason);
+    return false;
+  }
+}
+
+/* Kein ImageCapture: Safari/iOS und einige Browser unterstützen es unzuverlässig.
+   Stattdessen wird direkt ein Frame aus dem Video auf ein Canvas kopiert. */
+function captureFrame(){
+  if(!stream || video.readyState<2){ message("Kamera ist noch nicht bereit"); return; }
+  const c=document.createElement("canvas");
+  c.width=video.videoWidth; c.height=video.videoHeight;
+  c.getContext("2d",{alpha:false}).drawImage(video,0,0,c.width,c.height);
+  capturedDataUrl=c.toDataURL("image/jpeg",.94);
+  photo.src=capturedDataUrl;
+  photo.style.display="block"; video.style.display="none";
+  $("analyze").disabled=false; $("download").disabled=false;
+  $("imageStatus").textContent=`Bild vorhanden: ${c.width} × ${c.height}px`;
+  message("Bild aufgenommen");
+}
+
+function loadFile(f){
+  if(!f || !f.type.startsWith("image/")) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    capturedDataUrl=r.result; photo.src=capturedDataUrl;
+    photo.style.display="block"; video.style.display="none";
+    $("analyze").disabled=false; $("download").disabled=false;
+    $("retake").disabled=false;
+    const im=new Image(); im.onload=()=>{$("imageStatus").textContent=`Bild vorhanden: ${im.naturalWidth} × ${im.naturalHeight}px`};
+    im.src=capturedDataUrl; message("Bild geladen");
+  };
+  r.readAsDataURL(f);
+}
+
+$("start").onclick=startCamera;
+$("capture").onclick=captureFrame;
+$("fileBtn").onclick=()=>file.click();
+file.onchange=e=>loadFile(e.target.files[0]);
+$("retake").onclick=async()=>{ hide3d(); await startCamera(); };
+$("reset").onclick=()=>{
+  if(stream) stream.getTracks().forEach(t=>t.stop()); stream=null; capturedDataUrl=null; markers=[];
+  video.srcObject=null; video.style.display="block"; photo.style.display="none";
+  $("capture").disabled=true; $("analyze").disabled=true; $("download").disabled=true;
+  $("show3d").disabled=true; $("markers").textContent="Keine Analyse durchgeführt.";
+  $("imageStatus").textContent="Noch kein Bild vorhanden."; message("Zurückgesetzt");
+  setStatus("camDot","camStatus","Nicht gestartet","");
+};
+$("download").onclick=()=>{
+  if(!capturedDataUrl)return;
+  const a=document.createElement("a"); a.href=capturedDataUrl; a.download="rohr-routing.jpg"; a.click();
+};
+
+/* OpenCV ist NICHT Voraussetzung für Kamera und Bildaufnahme.
+   Es wird erst danach geladen. Dadurch bleibt die App benutzbar,
+   selbst wenn CDN/OpenCV blockiert ist. */
+window.Module = {
+  onRuntimeInitialized(){
+    cvReady=true;
+    setStatus("cvDot","cvStatus","OpenCV bereit","ok");
+  }
+};
+
+const cvScript=document.createElement("script");
+cvScript.src="https://docs.opencv.org/4.x/opencv.js";
+cvScript.async=true;
+cvScript.onload=()=>{
+  const started=Date.now();
+  const timer=setInterval(()=>{
+    if(window.cv && typeof cv.Mat==="function"){
+      if(typeof cv.aruco!=="undefined"){
+        cvReady=true; setStatus("cvDot","cvStatus","OpenCV + ArUco bereit","ok");
+      } else {
+        setStatus("cvDot","cvStatus","OpenCV geladen, ArUco-Modul fehlt","warn");
+      }
+      clearInterval(timer);
+    } else if(Date.now()-started>12000){
+      setStatus("cvDot","cvStatus","OpenCV nicht verfügbar – Bildaufnahme funktioniert trotzdem","warn");
+      clearInterval(timer);
+    }
+  },100);
+};
+cvScript.onerror=()=>setStatus("cvDot","cvStatus","OpenCV konnte nicht geladen werden – Bildaufnahme funktioniert trotzdem","warn");
+document.head.appendChild(cvScript);
+
+async function analyze(){
+  if(!capturedDataUrl){message("Zuerst ein Bild aufnehmen");return}
+  $("loading").style.display="grid";
+  markers=[];
+  try{
+    if(!cvReady || !cv?.aruco){
+      $("markers").innerHTML='<span class="muted">OpenCV/ArUco ist nicht verfügbar. Das Bild wurde korrekt aufgenommen.</span>';
+      $("route").textContent="Keine automatische Marker-Erkennung möglich.";
+      message("OpenCV nicht verfügbar");
+      return;
+    }
+
+    const img=new Image();
+    await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=capturedDataUrl});
+
+    const src=cv.imread(img), gray=new cv.Mat();
+    cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
+
+    const dictionary=cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50);
+    const corners=new cv.MatVector(), ids=new cv.Mat(), rejected=new cv.Mat();
+    const params=cv.aruco.DetectorParameters.create();
+    cv.aruco.detectMarkers(gray,dictionary,corners,ids,params);
+
+    const markerMm=Math.max(1,Number($("markerSize").value)||50);
+    const markerM=markerMm/1000;
+
+    // Näherung: quadratisches Bildmodell mit principal point in der Bildmitte.
+    // Für echte Messgenauigkeit kann später eine gespeicherte Kalibrierung geladen werden.
+    const fUser=Number($("focal").value);
+    const f=(fUser>0)?fUser:Math.max(img.width,img.height);
+    const cx=img.width/2, cy=img.height/2;
+
+    const cameraMatrix=cv.matFromArray(3,3,cv.CV_64FC1,[
+      f,0,cx, 0,f,cy, 0,0,1
+    ]);
+    const k1=Number($("dist1").value)||0;
+    const k2=Number($("dist2").value)||0;
+    const distCoeffs=cv.matFromArray(5,1,cv.CV_64FC1,[k1,k2,0,0,0]);
+
+    // OpenCV.js-Versionen unterscheiden sich bei ArUco-Pose-Funktionen.
+    // Wenn estimatePoseSingleMarkers vorhanden ist, nutzen wir die echte Pose.
+    let rvecs=null,tvecs=null;
+    if(ids.rows>0 && typeof cv.aruco.estimatePoseSingleMarkers==="function"){
+      rvecs=new cv.Mat(); tvecs=new cv.Mat();
+      cv.aruco.estimatePoseSingleMarkers(corners,markerM,cameraMatrix,distCoeffs,rvecs,tvecs);
+    }
+
+    for(let i=0;i<ids.rows;i++){
+      const c=corners.get(i);
+      const d=c.data32F;
+      let px=0,py=0;
+      for(let k=0;k<4;k++){px+=d[k*2];py+=d[k*2+1]}
+      px/=4; py/=4;
+
+      let x=null,y=null,z=null,rx=null,ry=null,rz=null;
+      if(tvecs){
+        x=tvecs.data64F[i*3];
+        y=tvecs.data64F[i*3+1];
+        z=tvecs.data64F[i*3+2];
+        rx=rvecs.data64F[i*3];
+        ry=rvecs.data64F[i*3+1];
+        rz=rvecs.data64F[i*3+2];
+      }
+
+      markers.push({id:ids.data32S[i],x:px,y:py,z:z,camX:x,camY:y,camZ:z,rx,ry,rz});
+    }
+
+    renderMarkers(img.width,img.height);
+
+    if(markers.length>=2 && markers.every(m=>m.camZ!==null)){
+      const a=markers[0],b=markers[1];
+      const dx=b.camX-a.camX,dy=b.camY-a.camY,dz=b.camZ-a.camZ;
+      const distance=Math.sqrt(dx*dx+dy*dy+dz*dz);
+      $("route").innerHTML=
+        `Marker ${a.id} → ${b.id}<br>`+
+        `ΔX: ${(dx*1000).toFixed(1)} mm · ΔY: ${(dy*1000).toFixed(1)} mm · ΔZ: ${(dz*1000).toFixed(1)} mm<br>`+
+        `<b>Abstand: ${(distance*1000).toFixed(1)} mm</b>`;
+      $("show3d").disabled=false;
+    }
+
+    src.delete();gray.delete();corners.delete();ids.delete();rejected.delete();
+    cameraMatrix.delete();distCoeffs.delete();
+    if(rvecs)rvecs.delete(); if(tvecs)tvecs.delete();
+  }catch(e){
+    console.error(e);
+    $("markers").innerHTML='<span class="muted">Analyse fehlgeschlagen: '+(e?.message||e)+'</span>';
+    message("Analysefehler");
+  }finally{$("loading").style.display="none"}
+}
+
+function renderMarkers(w,h){
+  if(!markers.length){
+    $("markers").textContent="Keine ArUco-Marker erkannt.";
+    $("route").textContent="Mindestens zwei Marker werden für einen räumlichen Abstand benötigt.";
+    $("show3d").disabled=true; message("Keine Marker erkannt"); return;
+  }
+  $("markers").innerHTML=markers.map((m,i)=>{
+    const pose=m.camZ!==null
+      ? `<br><span class="muted">Kamera X ${(m.camX*1000).toFixed(1)} · Y ${(m.camY*1000).toFixed(1)} · Z ${(m.camZ*1000).toFixed(1)} mm</span>`
+      : `<br><span class="muted">Keine Pose berechnet</span>`;
+    return `<div class="marker"><span><b>Marker ${i+1}</b> · ID ${m.id}${pose}</span><span>${Math.round(m.x)}, ${Math.round(m.y)} px</span></div>`;
+  }).join("");
+  if(markers.length>=2){
+    $("route").textContent="Zwei oder mehr Marker erkannt. Pose und 3D-Ansicht werden berechnet.";
+  }
+  $("show3d").disabled=false;
+  message(`${markers.length} Marker erkannt`);
+}
+
+$("analyze").onclick=analyze;
+
+/* Einfache, robuste 3D-Ansicht. Wichtig: Ohne Kamerakalibrierung sind
+   Pixelpositionen keine echten Meterkoordinaten. */
+function init3d(){
+  if(threeRenderer)return;
+  const el=$("three");
+  threeScene=new THREE.Scene();
+  threeScene.background=new THREE.Color(0x050814);
+  threeCamera=new THREE.PerspectiveCamera(55,1,.01,100);
+  threeCamera.position.set(0,0,4);
+  threeRenderer=new THREE.WebGLRenderer({antialias:true});
+  el.appendChild(threeRenderer.domElement);
+  threeScene.add(new THREE.AmbientLight(0xffffff,.8));
+  const light=new THREE.DirectionalLight(0xffffff,1); light.position.set(2,3,4); threeScene.add(light);
+  threeScene.add(new THREE.AxesHelper(1.5));
+  threeGroup=new THREE.Group(); threeScene.add(threeGroup);
+  animate3d();
+}
+function resize3d(){
+  if(!threeRenderer)return;
+  const w=$("three").clientWidth,h=$("three").clientHeight;
+  threeRenderer.setSize(w,h,false); threeCamera.aspect=w/h; threeCamera.updateProjectionMatrix();
+}
+function show3d(){
+  if(!markers.length)return;
+  init3d(); $("overlay").style.display="none"; $("video").style.display="none"; $("photo").style.display="none"; $("three").style.display="block";
+  while(threeGroup.children.length)threeGroup.remove(threeGroup.children[0]);
+  const minx=Math.min(...markers.map(m=>m.x)),maxx=Math.max(...markers.map(m=>m.x));
+  const miny=Math.min(...markers.map(m=>m.y)),maxy=Math.max(...markers.map(m=>m.y));
+  const sx=Math.max(maxx-minx,1),sy=Math.max(maxy-miny,1);
+  const hasPose=markers.every(m=>m.camX!==null && m.camY!==null && m.camZ!==null);
+  if(hasPose){
+    const scale=3/Math.max(...markers.map(m=>Math.abs(m.camX||0)),...markers.map(m=>Math.abs(m.camY||0)),...markers.map(m=>Math.abs(m.camZ||0)),0.001);
+    markers.forEach(m=>{
+      const mesh=new THREE.Mesh(new THREE.SphereGeometry(.10,20,20),new THREE.MeshStandardMaterial({color:0x38bdf8}));
+      // OpenCV: X rechts, Y nach unten, Z nach vorne.
+      mesh.position.set(m.camX*scale,-m.camY*scale,-m.camZ*scale);
+      threeGroup.add(mesh);
+    });
+  }else{
+    markers.forEach(m=>{
+      const x=((m.x-(minx+maxx)/2)/sx)*3;
+      const y=-((m.y-(miny+maxy)/2)/sy)*2;
+      const mesh=new THREE.Mesh(new THREE.SphereGeometry(.10,20,20),new THREE.MeshStandardMaterial({color:0x38bdf8}));
+      mesh.position.set(x,y,0); threeGroup.add(mesh);
+    });
+  }
+  if(markers.length>=2){
+    const a=threeGroup.children[0].position,b=threeGroup.children[1].position;
+    const mid=a.clone().add(b).multiplyScalar(.5), len=a.distanceTo(b);
+    const geo=new THREE.CylinderGeometry(.035,.035,len,12);
+    const mat=new THREE.MeshStandardMaterial({color:0xfb7185});
+    const pipe=new THREE.Mesh(geo,mat); pipe.position.copy(mid);
+    pipe.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),b.clone().sub(a).normalize());
+    threeGroup.add(pipe);
+  }
+  resize3d();
+}
+function hide3d(){
+  $("three").style.display="none";$("overlay").style.display="block";
+  if(capturedDataUrl){photo.style.display="block";video.style.display="none"}else{video.style.display="block"}
+}
+function animate3d(){
+  requestAnimationFrame(animate3d);
+  if(threeRenderer){threeGroup.rotation.y+=.002;threeRenderer.render(threeScene,threeCamera)}
+}
+$("show3d").onclick=show3d;
+$("show2d").onclick=hide3d;
+window.onresize=resize3d;
+</script>
+</body>
+</html>

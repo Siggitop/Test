@@ -229,10 +229,13 @@ function currentGravityDown(){
   if(len < 1e-6) return null;
   return { x:-c.x/len, y:-c.y/len, z:-c.z/len };
 }
-let motionListenerAdded = false;
-function attachMotionListener(){
-  if(motionListenerAdded) return;
-  motionListenerAdded = true;
+async function initMotion(){
+  if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
+    try{
+      const res = await DeviceMotionEvent.requestPermission();
+      if(res !== 'granted'){ gravityReadout.textContent = 'Schwerkraft-Sensor: Zugriff verweigert'; return; }
+    }catch(e){ gravityReadout.textContent = 'Schwerkraft-Sensor: nicht verfügbar'; return; }
+  }
   window.addEventListener('devicemotion', e=>{
     if(e.accelerationIncludingGravity && e.accelerationIncludingGravity.x!=null){
       lastAccel = e.accelerationIncludingGravity;
@@ -241,45 +244,11 @@ function attachMotionListener(){
     }
   });
   gravityReadout.textContent = 'Schwerkraft-Sensor: warte auf Bewegungsdaten – Handy kurz ruhig halten …';
-  // Kommt nach ein paar Sekunden immer noch kein einziger Wert an (Desktop-Browser ohne
-  // Sensor, Berechtigung im Hintergrund verweigert, kein HTTPS o.ä.), ehrlich anzeigen
-  // statt dauerhaft "warte..." stehen zu lassen - inkl. Retry-Knopf.
-  setTimeout(()=>{
-    if(!lastAccel){
-      gravityReadout.innerHTML = 'Schwerkraft-Sensor: keine Daten empfangen <button id="retryMotion" style="margin-left:6px;padding:3px 8px;font-size:11px;border-radius:6px">erneut versuchen</button>';
-      const btn=document.getElementById('retryMotion');
-      if(btn) btn.onclick=()=>{ motionListenerAdded=false; requestMotion(); };
-    }
-  }, 3000);
 }
-async function requestMotion(){
-  if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
-    try{
-      const res = await DeviceMotionEvent.requestPermission();
-      if(res !== 'granted'){
-        gravityReadout.textContent = 'Schwerkraft-Sensor: Zugriff verweigert (iOS-Einstellungen → Safari → Bewegung & Ausrichtung erlauben, dann Seite neu laden)';
-        return;
-      }
-    }catch(e){
-      gravityReadout.innerHTML = `Schwerkraft-Sensor: Anfrage fehlgeschlagen <button id="retryMotion2" style="margin-left:6px;padding:3px 8px;font-size:11px;border-radius:6px">erneut versuchen</button>`;
-      const btn=document.getElementById('retryMotion2');
-      if(btn) btn.onclick=requestMotion;
-      return;
-    }
-  }
-  attachMotionListener();
-}
-// Auf iOS braucht requestPermission() zwingend eine ECHTE Nutzer-Geste im selben
-// Ereignis - ein sofortiger Aufruf beim Laden der Seite (ohne Geste) schlägt dort
-// garantiert fehl und hätte fälschlich "nicht verfügbar" angezeigt, bevor man überhaupt
-// die Chance hatte anzutippen. Deshalb: auf Browsern mit dieser API erst auf den ersten
-// Tap warten; auf Android/Desktop (keine solche API) sofort versuchen.
-if(typeof DeviceMotionEvent === 'undefined' || typeof DeviceMotionEvent.requestPermission !== 'function'){
-  requestMotion();
-} else {
-  gravityReadout.textContent = 'Schwerkraft-Sensor: Bildschirm antippen zum Aktivieren';
-  captureScreen.addEventListener('pointerdown', requestMotion, {once:true});
-}
+// Sensor-Start erfordert auf iOS eine Nutzer-Geste - beim ersten Touch/Klick auf die
+// Aufnahme-Seite auslösen (siehe unten), zusätzlich sofort versuchen (Android/Desktop-Dev).
+initMotion();
+captureScreen.addEventListener('pointerdown', initMotion, {once:true});
 
 // --- ArUco-Erkennung + Pose je Marker -------------------------------------
 // Liefert für 4 Ecken (im Bild, Pixel, im Uhrzeigersinn beginnend oben-links - exakt die
@@ -502,7 +471,7 @@ const HANDLE_LINE  = HANDLE_OFF*0.65;
 const MARKER_R     = THREE.MathUtils.clamp(UNIT*0.08,  0.006, 0.04);
 const MARKER_ARROW = THREE.MathUtils.clamp(UNIT*0.9,   0.06,  0.55);
 const STUB_LEN     = THREE.MathUtils.clamp(0.15, 0.02, markerDist*0.45);
-const MIN_SEG      = Math.max(PIPE_R*3, UNIT*0.01);
+const MIN_SEG      = Math.max(PIPE_R*6, UNIT*0.03);
 
 const camOffsetDir = new THREE.Vector3(3,2.5,4).normalize();
 camera.position.copy(markerA.position).add(camOffsetDir.multiplyScalar(Math.max(markerDist*3, 0.6)));
@@ -729,122 +698,57 @@ function reset(){
 // Ergebnis ist nur ein pragmatischer, gültiger Vorschlag (kürzeste Lösung mit maximal
 // zwei Zwischen-Bögen) - kein optimaler/kürzester Pfad im umfassenden Sinn, und bewusst
 // jederzeit über die normalen Routing-Werkzeuge weiter anpassbar.
-// Kandidaten-Zwischenrichtungen relativ zu einer Vorwärtsrichtung "fwd": die 4 90°-Richtungen
-// plus die 4 daraus abgeleiteten 45°-Richtungen (gleicher Satz, den auch die manuellen
-// Routing-Griffe anbieten).
-function turnCandidates(fwd){
-  const p=perpDirs(fwd);
-  return [...p, ...p.map(v=>fwd.clone().add(v).normalize())];
-}
-// Löst L1*c0 + L2*c1 + L3*c2 = delta exakt (3 Gleichungen, 3 Unbekannte). null, wenn
-// singulär oder eine Länge unter MIN_SEG/negativ wäre.
-function solve3(c0,c1,c2,delta){
-  const M=new THREE.Matrix3().set(c0.x,c1.x,c2.x, c0.y,c1.y,c2.y, c0.z,c1.z,c2.z);
-  if(Math.abs(M.determinant())<1e-9) return null;
-  const L=delta.clone().applyMatrix3(M.clone().invert());
-  if(L.x>=MIN_SEG && L.y>=MIN_SEG && L.z>=MIN_SEG) return [L.x,L.y,L.z];
-  return null;
-}
-
-// Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Bögen.
-// Startrichtung an A = markerA.xAxis (wie beim manuellen Routing). Ankunftsrichtung an B
-// = -markerB.xAxis: an B zeigt +X in Richtung des vorhandenen Rohrs dahinter (siehe
-// Andeutung oben), die neue Route muss also aus der Gegenrichtung ankommen, um sauber
-// in einer Linie in das vorhandene Rohr überzugehen.
-//
-// WICHTIG: Sobald DA und DB (anti-)parallel sind - und genau das ist der mit Abstand
-// häufigste Realfall (gerade Verlängerung ODER seitlicher Versatz zwischen zwei etwa
-// gleich ausgerichteten Rohrenden) - sind DA und DB als Vektoren linear ABHÄNGIG. Jedes
-// 3x3-Gleichungssystem der Form [DA | irgendeine Zwischenrichtung | DB] ist dann IMMER
-// singulär (Rang höchstens 2), unabhängig von der gewählten Zwischenrichtung. Das war der
-// eigentliche Grund, warum Auto-Route bisher praktisch nie eine Lösung gefunden hat. Für
-// diesen Fall gibt es daher einen eigenen "Versatz"-Zweig (zwei gleich große Bögen mit
-// geradem Zwischenstück - die klassische Versatz-Lösung).
 function tryAutoRoute(){
   const A=markerA.position, DA=markerA.xAxis.clone().normalize();
   const B=markerB.position, DB=markerB.xAxis.clone().normalize().negate();
   const delta=new THREE.Vector3().subVectors(B,A);
-  const log=(...a)=>console.log('[AutoRoute]',...a);
-  if(delta.length()<1e-6){ log('A und B liegen am selben Punkt.'); return null; }
-  const deltaDir=delta.clone().normalize();
-  log('DA=',DA.toArray().map(n=>n.toFixed(3)),'DB=',DB.toArray().map(n=>n.toFixed(3)),'delta=',delta.toArray().map(n=>n.toFixed(3)),'DA·DB=',DA.dot(DB).toFixed(3));
+  if(delta.length()<1e-6) return null;
 
-  // 1 Segment: direkte gerade Verbindung.
+  // 1 Segment: direkte gerade Verbindung, nur wenn beide Achsen exakt auf dieser Linie liegen.
+  const deltaDir=delta.clone().normalize();
   if(deltaDir.dot(DA)>0.999 && deltaDir.dot(DB)>0.999){
-    log('Lösung: 1 gerades Segment.');
     return [{dir:DA.clone(), len:delta.length()}];
   }
 
-  const collinear = Math.abs(DA.dot(DB)) > 0.97;
-
-  if(collinear){
-    // Versatz-Fall: Anteil von delta entlang DA ("Vorlauf") und senkrecht dazu ("seitlicher
-    // Versatz") trennen. Zwei gleich große 45°-Bögen mit einem geraden Zwischenstück
-    // überbrücken den seitlichen Versatz, während vor und nach dem Versatz weiter parallel
-    // zu DA verlegt wird (bzw. bei DB≈-DA automatisch auch parallel zu DB).
-    const along = delta.dot(DA);
-    const lateral = delta.clone().sub(DA.clone().multiplyScalar(along));
-    const latLen = lateral.length();
-    log('Kollinearer Fall: Vorlauf=',along.toFixed(3),'seitlicher Versatz=',latLen.toFixed(3));
-    if(latLen < MIN_SEG){
-      if(along>2*MIN_SEG && deltaDir.dot(DA)>0.9){
-        log('Kaum Versatz, aber nicht exakt fluchtend -> ein gerades Segment.');
-        return [{dir:DA.clone(), len:delta.length()}];
-      }
-      log('Kollinear, aber kein sinnvoller Versatz gefunden (zu wenig Vorlauf/Versatz).');
-      return null;
-    }
-    const latDir = lateral.clone().normalize();
-    const kinkDir = DA.clone().add(latDir).normalize(); // 45° zwischen DA und Versatzrichtung
-    const L2 = latLen / Math.SQRT1_2;              // Bogenlänge, die genau latLen Versatz erzeugt
-    const forwardUsed = L2*Math.SQRT1_2;            // = latLen, Vorlauf-Anteil des Versatz-Segments
-    const remaining = along - forwardUsed;
-    if(L2>=MIN_SEG && remaining>=2*MIN_SEG){
-      const L1=remaining/2, L3=remaining/2;
-      log('Lösung: Versatz mit 2×45°-Bogen, L1=',L1.toFixed(3),'L2=',L2.toFixed(3),'L3=',L3.toFixed(3));
-      return [{dir:DA.clone(),len:L1},{dir:kinkDir,len:L2},{dir:DA.clone(),len:L3}];
-    }
-    log('Versatz-Geometrie ergäbe zu kurze/negative Segmente (remaining=',remaining.toFixed(3),').');
-    return null;
-  }
-
-  // Nicht-kollinearer Fall (z.B. Ecklösung): DA und DB sind linear unabhängig, ein
-  // Gleichungssystem [DA | Zwischenrichtung | DB] kann daher grundsätzlich lösbar sein.
-
   // 2 Segmente (ein Bogen): nur exakt lösbar, wenn delta in der von DA/DB aufgespannten Ebene liegt.
   {
-    const n=new THREE.Vector3().crossVectors(DA,DB).normalize();
-    if(Math.abs(delta.dot(n)) < UNIT*0.01){
-      const uu=DA.dot(DA), uv=DA.dot(DB), vv=DB.dot(DB), ud=DA.dot(delta), vd=DB.dot(delta);
-      const det=uu*vv-uv*uv;
-      if(Math.abs(det)>1e-9){
-        const L1=(ud*vv-vd*uv)/det, L2=(uu*vd-uv*ud)/det;
-        if(L1>=MIN_SEG && L2>=MIN_SEG){
-          log('Lösung: 2 Segmente (ein Bogen).');
-          return [{dir:DA.clone(),len:L1},{dir:DB.clone(),len:L2}];
+    const n=new THREE.Vector3().crossVectors(DA,DB);
+    if(n.lengthSq()>1e-8){
+      const distToPlane=Math.abs(delta.dot(n.clone().normalize()));
+      if(distToPlane < UNIT*0.01){
+        const uu=DA.dot(DA), uv=DA.dot(DB), vv=DB.dot(DB), ud=DA.dot(delta), vd=DB.dot(delta);
+        const det=uu*vv-uv*uv;
+        if(Math.abs(det)>1e-9){
+          const L1=(ud*vv-vd*uv)/det, L2=(uu*vd-uv*ud)/det;
+          if(L1>=MIN_SEG && L2>=MIN_SEG) return [{dir:DA.clone(),len:L1},{dir:DB.clone(),len:L2}];
         }
       }
     }
   }
 
-  // 3 Segmente (zwei Bögen) über eine Zwischenrichtung aus dem Kandidatensatz.
+  // 3 Segmente (zwei Bögen) über eine Zwischenrichtung aus dem gleichen Kandidatensatz,
+  // den auch das manuelle Routing anbietet (90° und 45° relativ zu DA).
+  const candidates=[...perpDirs(DA), ...perpDirs(DA).map(p=>DA.clone().add(p).normalize())];
   let best=null;
-  turnCandidates(DA).forEach(mid=>{
-    const sol=solve3(DA,mid,DB,delta);
-    if(sol){
-      const total=sol[0]+sol[1]+sol[2];
-      if(!best || total<best.total) best={total, steps:[{dir:DA.clone(),len:sol[0]},{dir:mid.clone(),len:sol[1]},{dir:DB.clone(),len:sol[2]}]};
+  candidates.forEach(mid=>{
+    const M=new THREE.Matrix3().set(
+      DA.x,mid.x,DB.x,
+      DA.y,mid.y,DB.y,
+      DA.z,mid.z,DB.z
+    );
+    if(Math.abs(M.determinant())<1e-6) return;
+    const L=delta.clone().applyMatrix3(M.clone().invert());
+    if(L.x>=MIN_SEG && L.y>=MIN_SEG && L.z>=MIN_SEG){
+      const total=L.x+L.y+L.z;
+      if(!best || total<best.total) best={total, steps:[{dir:DA.clone(),len:L.x},{dir:mid.clone(),len:L.y},{dir:DB.clone(),len:L.z}]};
     }
   });
-  if(best){ log('Lösung: 3 Segmente (zwei Bögen), Gesamtlänge=',best.total.toFixed(3)); return best.steps; }
-
-  log('Keine Lösung gefunden.');
-  return null;
+  return best ? best.steps : null;
 }
 document.getElementById('autoroute').onclick=()=>{
   const steps=tryAutoRoute();
   if(!steps){
-    alert('Keine einfache automatische Route gefunden (Details in der Browser-Konsole). Bitte manuell verlegen.');
+    alert('Keine einfache automatische Route gefunden (Marker stehen zueinander ungünstig). Bitte manuell verlegen.');
     return;
   }
   reset();
