@@ -18,6 +18,9 @@ button.active{background:#2468e8;border-color:#4e8cff}
 .row{display:flex;gap:7px;margin-top:8px}.row>*{flex:1}
 #bottom{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;background:rgba(9,17,30,.9);padding:11px 20px;border-radius:12px;border:1px solid #31435e;color:#cbd7e8}
 #hint{position:fixed;left:18px;bottom:18px;z-index:5;color:#aebbd0;font-size:12px}
+#scalebar{position:fixed;left:18px;bottom:46px;z-index:5;display:flex;align-items:center;gap:8px;color:#eef4ff;font-size:12px;font-variant-numeric:tabular-nums}
+#scalebar-track{height:6px;display:flex;align-items:flex-end}
+#scalebar-fill{height:6px;background:#eef4ff;border-left:2px solid #eef4ff;border-right:2px solid #eef4ff;box-sizing:border-box;transition:width .08s linear}
 @media(max-width:700px){#panel{width:220px;right:8px;top:72px;padding:12px}.step{margin:8px 0}.muted{font-size:11px}#top{height:56px}h1{font-size:16px;margin-right:4px}.desktopOnly{display:none}}
 </style>
 </head>
@@ -25,11 +28,14 @@ button.active{background:#2468e8;border-color:#4e8cff}
 <div id="app"></div>
 <div id="top">
  <span class="logo">⌁</span><h1>RohrRouting</h1>
- <button id="straight" class="active">Gerade</button>
- <button id="b90">Biegung 90°</button>
- <button id="b45">Biegung 45°</button>
+ <button id="b90" class="modebtn active">Biegung 90°</button>
+ <button id="b45" class="modebtn">Biegung 45°</button>
  <select id="diam"><option>Ø 20 mm</option><option>Ø 25 mm</option><option>Ø 32 mm</option><option>Ø 40 mm</option></select>
  <button id="undo">↶</button><button id="reset">Neu</button>
+ <span style="flex:1"></span>
+ <button id="toggleGizmo" class="active" title="Routing-Gizmo ein-/ausblenden">Gizmo</button>
+ <button id="togglePanel" class="active" title="Anleitung ein-/ausblenden">Anleitung</button>
+ <button id="toggleCamView" title="Blick aus Sicht der Aufnahme-Kamera (wie im OpenCV-Eingangsbild)">📷 Kamera-Sicht</button>
 </div>
 <div id="panel">
  <h2>Rohr verlegen</h2>
@@ -38,10 +44,11 @@ button.active{background:#2468e8;border-color:#4e8cff}
  <div class="step"><span class="num">3</span><div><b>Segment erstellen</b><div class="muted">Gerade, 90° oder 45° wird automatisch erzeugt.</div></div></div>
  <hr style="border:0;border-top:1px solid #31435e">
  <b>Aktueller Modus</b>
- <div class="row"><button id="mode">Gerade</button></div>
- <div style="margin-top:14px"><b>Rohrdurchmesser</b><div class="muted" id="dtext">20 mm</div></div>
+ <div class="row"><button id="mode">Biegung 90°</button></div>
+ <div style="margin-top:14px"><b>Rohrdurchmesser</b><div class="muted" id="dtext">20 mm</div></div><div style="margin-top:14px"><b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div></div>
 </div>
-<div id="bottom">Tippe auf das Rohrende und ziehe in eine Richtung …</div>
+<div id="bottom">Startpunkt = ArUco-Marker A · X-Achse = Rohrachse · Ziel = Marker B</div>
+<div id="scalebar"><div id="scalebar-track"><div id="scalebar-fill"></div></div><span id="scalebar-label">–</span></div>
 <div id="hint">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
 
 <script type="importmap">
@@ -61,34 +68,139 @@ scene.add(new THREE.HemisphereLight(0xffffff,0x30405a,2.1));
 const dl=new THREE.DirectionalLight(0xffffff,2.2); dl.position.set(4,7,5); scene.add(dl);
 
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.01,100);
-camera.position.set(5,4.2,6);
+// Kamera wird hier nur provisorisch positioniert (0,0,0 existiert immer).
+// Die endgültige, an den realen Marker-Abstand angepasste Position wird weiter unten gesetzt.
+camera.position.set(3,2.5,4);
 
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace; document.querySelector('#app').appendChild(renderer.domElement);
 
 const controls=new OrbitControls(camera,renderer.domElement);
-controls.enableDamping=true; controls.target.set(0,1.3,0);
-
-const grid=new THREE.GridHelper(8,16,0x3b4d66,0x26354a); scene.add(grid);
-const floor=new THREE.Mesh(new THREE.BoxGeometry(8,.08,8),new THREE.MeshStandardMaterial({color:0x182234}));
-floor.position.y=-.04; scene.add(floor);
+controls.enableDamping=true;
+// controls.target wird ebenfalls erst gesetzt, wenn markerA/markerB bekannt sind (siehe unten).
 
 const pipes=new THREE.Group(); scene.add(pipes);
 const joints=new THREE.Group(); scene.add(joints);
-let current=new THREE.Vector3(-2,1,0), direction=new THREE.Vector3(1,0,0);
-let history=[], selectedMode='straight';
+const markers=new THREE.Group(); scene.add(markers);
+
+// ArUco-Daten werden aus markers.json geladen.
+// Koordinaten und lokale Marker-X-Achsen kommen aus OpenCV.
+// OpenCV: X rechts, Y nach unten, Z von der Kamera weg.
+// Three.js: X rechts, Y nach oben, Z nach hinten.
+function cvToThree(v){
+  return new THREE.Vector3(v.x, -v.y, -v.z);
+}
+
+let markerData;
+try {
+  markerData = await fetch('markers.json').then(r=>{
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
+} catch(err) {
+  console.error('markers.json konnte nicht geladen werden:', err);
+  markerData = {
+    markerA:{id:'A',position:{x:0,y:0,z:0},xAxis:{x:1,y:0,z:0},yAxis:{x:0,y:1,z:0},zAxis:{x:0,y:0,z:1}},
+    markerB:{id:'B',position:{x:2,y:0,z:0},xAxis:{x:-1,y:0,z:0},yAxis:{x:0,y:1,z:0},zAxis:{x:0,y:0,z:-1}}
+  };
+}
+
+function readMarker(m){
+  const out = {
+    id:m.id,
+    position:cvToThree(m.position),
+    xAxis:cvToThree(m.xAxis).normalize()
+  };
+  if(m.yAxis) out.yAxis = cvToThree(m.yAxis).normalize();
+  if(m.zAxis) out.zAxis = cvToThree(m.zAxis).normalize();
+  return out;
+}
+
+const markerA=readMarker(markerData.markerA);
+const markerB=readMarker(markerData.markerB);
+
+// Realer Abstand der beiden Marker (Meter). Alle interaktiven Elemente (Rohr-Routing-
+// Gizmo, Segmentlänge, Marker-Pfeile) werden proportional dazu skaliert – vorher waren
+// diese Größen fest für den Meter-Bereich ausgelegt (Kugel Ø 32 cm, Griffweite 48 cm,
+// Segmentlänge 1 m) und haben bei wenigen cm Marker-Abstand (hier ca. 18.6 cm) alles
+// verdeckt, inkl. Marker B.
+const markerDist = markerA.position.distanceTo(markerB.position) || 1;
+const UNIT = markerDist;
+
+const PIPE_R      = THREE.MathUtils.clamp(UNIT*0.07,  0.003, 0.1);
+const SEG_LEN      = THREE.MathUtils.clamp(UNIT*0.55,  0.02,  1.0);
+const ENDPOINT_R   = THREE.MathUtils.clamp(UNIT*0.16,  0.006, 0.16);
+const HANDLE_OFF   = THREE.MathUtils.clamp(UNIT*0.42,  0.015, 0.48);
+const HANDLE_R     = THREE.MathUtils.clamp(UNIT*0.11,  0.004, 0.12);
+const HANDLE_LINE  = HANDLE_OFF*0.65;
+const MARKER_R     = THREE.MathUtils.clamp(UNIT*0.16,  0.01,  0.075);
+const MARKER_ARROW = THREE.MathUtils.clamp(UNIT*0.9,   0.06,  0.55);
+
+// Kamera & Controls proportional zum realen Abstand ausrichten, Blick auf die Mitte
+// zwischen A und B statt nur auf A.
+const camOffsetDir = new THREE.Vector3(3,2.5,4).normalize();
+camera.position.copy(markerA.position).add(camOffsetDir.multiplyScalar(Math.max(markerDist*3, 0.6)));
+const midAB = new THREE.Vector3().addVectors(markerA.position, markerB.position).multiplyScalar(.5);
+controls.target.copy(midAB);
+controls.minDistance = markerDist*0.3;
+controls.maxDistance = markerDist*30;
+controls.update();
+
+// Rekonstruierte Tischebene aus den Markerdaten: Die Verbindungslinie A→B liegt auf dem
+// Tisch, und die X-Achse eines flachen ArUco-Markers liegt immer in dessen eigener Ebene.
+// Aus dem Kreuzprodukt von A→B mit jeder der beiden X-Achsen ergibt sich je eine Tisch-
+// normale – stimmen beide (nahezu) überein, liegen die Marker wirklich in einer Ebene.
+const abDir = new THREE.Vector3().subVectors(markerB.position, markerA.position).normalize();
+const rawN1 = new THREE.Vector3().crossVectors(abDir, markerA.xAxis).normalize();
+const rawN2 = new THREE.Vector3().crossVectors(abDir, markerB.xAxis).normalize();
+let planeAngleDeg = THREE.MathUtils.radToDeg(rawN1.angleTo(rawN2));
+if(planeAngleDeg>90) planeAngleDeg = 180-planeAngleDeg;
+const n2aligned = rawN1.dot(rawN2) < 0 ? rawN2.clone().negate() : rawN2.clone();
+const tableNormal = new THREE.Vector3().addVectors(rawN1, n2aligned).normalize();
+console.log('Ebenen-Konsistenz A/B:', planeAngleDeg.toFixed(2), '° Abweichung (0° = perfekt koplanar)');
+
+// Referenzraster + halbtransparente Ebene, ausgerichtet auf die rekonstruierte Tischebene
+// (statt eines beliebigen globalen XZ-Grids, das nichts mit dem echten Tisch zu tun hat).
+const planeSize = Math.max(markerDist*6, 0.3);
+const tableGrid = new THREE.GridHelper(planeSize,16,0x3b4d66,0x26354a);
+tableGrid.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tableNormal);
+tableGrid.position.copy(midAB);
+scene.add(tableGrid);
+const tablePlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(planeSize,planeSize),
+  new THREE.MeshBasicMaterial({color:0x182234,transparent:true,opacity:.35,side:THREE.DoubleSide})
+);
+tablePlane.quaternion.copy(tableGrid.quaternion);
+tablePlane.position.copy(midAB);
+scene.add(tablePlane);
+
+// Die Marker-Mitten sind die Rohrenden.
+// Die X-Achse von A zeigt aus A heraus in Rohrrichtung.
+// Bei B zeigt -X zum Rohr hin.
+let current=markerA.position.clone();
+let direction=markerA.xAxis.clone();
+
+let history=[], selectedMode='b90';
+let targetMarker=markerB;
+
+document.getElementById('markerInfo').textContent =
+  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm · Ebenenabw. ${planeAngleDeg.toFixed(1)}°`;
+
+console.log('ArUco Marker A:', markerA);
+console.log('ArUco Marker B:', markerB);
+console.log('A → B Abstand:', markerDist.toFixed(3), 'm');
 
 let lastPipeMesh=null, lastPipeStart=null, lastPipeEnd=null;
 function pipeMat(active=false){return new THREE.MeshStandardMaterial({color:active?0x4e9cff:0xb7c6d8,metalness:.65,roughness:.25,emissive:active?0x092b5a:0})}
-function cylinderBetween(a,b,r=.10,active=false){
+function cylinderBetween(a,b,r=PIPE_R,active=false){
  const v=new THREE.Vector3().subVectors(b,a), len=v.length(), mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
  const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,20),pipeMat(active));
  m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize()); pipes.add(m);
  lastPipeMesh=m; lastPipeStart=a.clone(); lastPipeEnd=b.clone();
  return m;
 }
-function elbow(pivot,fromDir,toDir,r=.10){
+function elbow(pivot,fromDir,toDir,r=PIPE_R){
  const br=r*3.0;
  const p0=pivot.clone().sub(fromDir.clone().normalize().multiplyScalar(br));
  const p1=pivot.clone().add(toDir.clone().normalize().multiplyScalar(br));
@@ -106,11 +218,22 @@ function perpDirs(forward){
  return [u.clone(),u.clone().negate(),v.clone(),v.clone().negate()];
 }
 function handleDirs(){
- if(history.length===0) return CARDINALS.map(v=>v.clone());
- if(selectedMode==='straight') return [direction.clone()];
- const perps=perpDirs(direction);
- if(selectedMode==='b90') return perps;
- return perps.map(v=>direction.clone().add(v).normalize());
+ // Gerade weiter in der aktuellen Achsrichtung ist immer verfügbar -
+ // unabhängig vom gewählten Biegungsmodus (kein eigener "Gerade"-Modus mehr nötig).
+ const dirs=[direction.clone()];
+ if(history.length===0){
+   // Vor dem ersten Segment gibt es noch keine "Vorzugsrichtung" -
+   // zusätzlich alle 6 Welt-Achsen als Startrichtung anbieten.
+   CARDINALS.forEach(v=>dirs.push(v.clone()));
+ } else if(selectedMode==='b90'){
+   dirs.push(...perpDirs(direction));
+ } else {
+   dirs.push(...perpDirs(direction).map(v=>direction.clone().add(v).normalize()));
+ }
+ // Duplikate entfernen (z.B. falls die Marker-Achse zufällig mit einer Weltachse zusammenfällt).
+ const out=[];
+ dirs.forEach(d=>{ if(!out.some(o=>o.dot(d)>0.98)) out.push(d); });
+ return out;
 }
 // Achsenfarbe: reine X/Y/Z-Richtungen bekommen die klassischen Rot/Grün/Blau-Farben,
 // diagonale 45°-Richtungen eine eigene Akzentfarbe, damit man sie unterscheiden kann.
@@ -120,54 +243,204 @@ function colorFor(v){
  if(Math.abs(v.z)>.95) return 0x4e9cff;
  return 0xffa64e;
 }
+function makeArrow(start, dir, length, color){
+  const group=new THREE.Group();
+  const lineGeom=new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0,0,0),
+    dir.clone().multiplyScalar(length)
+  ]);
+  group.add(new THREE.Line(
+    lineGeom,
+    new THREE.LineBasicMaterial({color})
+  ));
+
+  const cone=new THREE.Mesh(
+    new THREE.ConeGeometry(Math.max(length*0.1,.008),Math.max(length*0.25,.02),12),
+    new THREE.MeshBasicMaterial({color})
+  );
+  cone.position.copy(dir.clone().multiplyScalar(length));
+  cone.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0,1,0),
+    dir.clone().normalize()
+  );
+  group.add(cone);
+  group.position.copy(start);
+  return group;
+}
+
+function createMarkerVisual(marker, isStart){
+  const g=new THREE.Group();
+  g.position.copy(marker.position);
+
+  // Marker-Mitte = Rohrende
+  const sphere=new THREE.Mesh(
+    new THREE.SphereGeometry(MARKER_R,16,16),
+    new THREE.MeshStandardMaterial({color:isStart?0x4e9cff:0xffa64e})
+  );
+  g.add(sphere);
+
+  // Alle 3 lokalen Achsen wie im OpenCV-Referenzbild (drawFrameAxes-Konvention):
+  // X = Rot, Y = Grün, Z = Blau. Y/Z werden nur gezeichnet, wenn sie in markers.json
+  // vorhanden sind (siehe readMarker) – sonst Warnung in der Konsole.
+  g.add(makeArrow(new THREE.Vector3(0,0,0), marker.xAxis, MARKER_ARROW, 0xff0000));
+  if(marker.yAxis){
+    g.add(makeArrow(new THREE.Vector3(0,0,0), marker.yAxis, MARKER_ARROW, 0x00ff00));
+  } else {
+    console.warn(`Marker ${marker.id}: yAxis fehlt in markers.json – wird nicht gezeichnet.`);
+  }
+  if(marker.zAxis){
+    g.add(makeArrow(new THREE.Vector3(0,0,0), marker.zAxis, MARKER_ARROW, 0x0000ff));
+  } else {
+    console.warn(`Marker ${marker.id}: zAxis fehlt in markers.json – wird nicht gezeichnet.`);
+  }
+
+  markers.add(g);
+}
+
+createMarkerVisual(markerA,true);
+createMarkerVisual(markerB,false);
+
+// Hilfslinie zwischen den beiden Rohrenden.
+// Sie ist nur eine Orientierung und KEINE automatisch erzeugte Rohrleitung.
+const targetGuide=new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    markerA.position.clone(),
+    markerB.position.clone()
+  ]),
+  new THREE.LineDashedMaterial({color:0x60708a,dashSize:UNIT*0.06,gapSize:UNIT*0.04})
+);
+targetGuide.computeLineDistances();
+scene.add(targetGuide);
+
 function endpointMarker(p,active=true){
  joints.clear();
  const g=new THREE.Group(); g.position.copy(p);
- const s=new THREE.Mesh(new THREE.SphereGeometry(.16,20,20),pipeMat(active));
+ const s=new THREE.Mesh(new THREE.SphereGeometry(ENDPOINT_R,20,20),pipeMat(active));
  g.add(s);
  handleDirs().forEach(v=>{
   const c=colorFor(v);
-  const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(.48));
-  const m=new THREE.Mesh(new THREE.SphereGeometry(.12,12,12),new THREE.MeshBasicMaterial({color:c}));
+  const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(HANDLE_OFF));
+  const m=new THREE.Mesh(new THREE.SphereGeometry(HANDLE_R,12,12),new THREE.MeshBasicMaterial({color:c}));
   m.userData.dir=v; m.userData.route=true; o.add(m);
-  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-.32)]),new THREE.LineBasicMaterial({color:c}));
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-HANDLE_LINE)]),new THREE.LineBasicMaterial({color:c}));
   o.add(line); g.add(o);
  });
  joints.add(g);
 }
 endpointMarker(current);
 
-function addSegment(dir,mode=selectedMode){
+function addSegment(dir,mode){
+ if(mode===undefined){
+   // Zeigt der gewählte Griff in dieselbe Richtung wie die aktuelle Rohrachse?
+   // Dann ist es eine gerade Fortsetzung, sonst eine Biegung im gewählten Modus.
+   const isContinue = history.length>0 && dir.clone().normalize().dot(direction.clone().normalize())>0.999;
+   mode = isContinue ? 'straight' : selectedMode;
+ }
  if(history.length===0) mode='straight';
- const len=1.0; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
+ const len=SEG_LEN; const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
  history.push({dir:dir.clone(),mode});
  if(mode==='straight'){
-   cylinderBetween(current,end,.1);
+   cylinderBetween(current,end,PIPE_R);
  } else {
    // Das zuletzt gezeichnete gerade Stück endet exakt am Knickpunkt und würde sich mit dem
    // Bogen überlappen (sichtbarer "Sporn"). Deshalb wird es hier um die Bogenlänge gekürzt,
-   // bevor der Bogen gezeichnet wird.
+   // bevor der Bogen gezeichnet wird. Trimm-Länge = elbow-Bogenradius (r*3), damit es exakt passt.
    if(lastPipeMesh){
      pipes.remove(lastPipeMesh);
-     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(.30));
-     cylinderBetween(lastPipeStart,trimmedEnd,.1);
+     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(PIPE_R*3));
+     cylinderBetween(lastPipeStart,trimmedEnd,PIPE_R);
    }
-   const e=elbow(current,direction,dir,.1);
-   cylinderBetween(e.p1,end,.1);
+   const e=elbow(current,direction,dir,PIPE_R);
+   cylinderBetween(e.p1,end,PIPE_R);
  }
  current.copy(end); direction.copy(dir).normalize(); endpointMarker(current);
 }
-function undo(){if(!history.length)return; pipes.clear(); lastPipeMesh=null; const h=history.slice(0,-1); history=[]; current=new THREE.Vector3(-2,1,0); direction.set(1,0,0); h.forEach(x=>addSegment(x.dir,x.mode)); endpointMarker(current);}
-function reset(){pipes.clear();lastPipeMesh=null;history=[];current.set(-2,1,0);direction.set(1,0,0);endpointMarker(current)}
+function undo(){
+  if(!history.length)return;
+  pipes.clear();
+  lastPipeMesh=null;
+  const h=history.slice(0,-1);
+  history=[];
+  current.copy(markerA.position);
+  direction.copy(markerA.xAxis).normalize();
+  h.forEach(x=>addSegment(x.dir,x.mode));
+  endpointMarker(current);
+}
+function reset(){
+  pipes.clear();
+  lastPipeMesh=null;
+  history=[];
+  current.copy(markerA.position);
+  direction.copy(markerA.xAxis).normalize();
+  endpointMarker(current);
+}
 
-['straight','b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
- selectedMode=id; document.querySelectorAll('#top button').forEach(b=>b.classList.remove('active'));
- document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='straight'?'Gerade':id==='b90'?'Biegung 90°':'Biegung 45°';
+['b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
+ selectedMode=id; document.querySelectorAll('#top button.modebtn').forEach(b=>b.classList.remove('active'));
+ document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='b90'?'Biegung 90°':'Biegung 45°';
  endpointMarker(current);
 });
 document.getElementById('undo').onclick=undo; document.getElementById('reset').onclick=reset;
 document.getElementById('diam').onchange=e=>document.getElementById('dtext').textContent=e.target.value.replace('Ø ','');
 document.getElementById('mode').onclick=()=>document.getElementById(selectedMode).click();
+
+// Gizmo (die Routing-Griffe am aktiven Rohrende) ein-/ausblenden - z.B. um freie Sicht
+// auf das bisher verlegte Rohr zu haben, ohne die Griffe im Weg zu haben.
+const toggleGizmoBtn=document.getElementById('toggleGizmo');
+toggleGizmoBtn.onclick=()=>{
+ joints.visible=!joints.visible;
+ toggleGizmoBtn.classList.toggle('active',joints.visible);
+};
+
+// Anleitungs-/Info-Panel rechts ein-/ausblenden.
+const panelEl=document.getElementById('panel');
+const togglePanelBtn=document.getElementById('togglePanel');
+togglePanelBtn.onclick=()=>{
+ const visible=panelEl.style.display==='none';
+ panelEl.style.display=visible?'':'none';
+ togglePanelBtn.classList.toggle('active',visible);
+};
+
+// --- Original-Kamera-Perspektive -----------------------------------------
+// markers.json definiert den Ursprung des Koordinatensystems ausdrücklich als
+// "die Kamera zum Aufnahmezeitpunkt" (siehe coordinateSystem.origin). Die Kamera
+// selbst saß dort also im Ursprung (0,0,0) und blickte "geradeaus" entlang ihrer
+// eigenen optischen Achse - in OpenCV-Konvention ist das +Z (X rechts, Y runter,
+// Z von der Kamera weg ins Bild). cvToThree() rechnet das um in x, -y, -z.
+// Damit landet die OpenCV-Blickrichtung (0,0,1) exakt auf Three.js' (0,0,-1) -
+// und das ist zufällig genau die Default-Blickrichtung einer Three.js-Kamera mit
+// Identity-Rotation (Forward = -Z, Up = +Y). Die OpenCV-"Oben"-Richtung (0,-1,0,
+// weil Y nach unten zeigt) landet ebenso exakt auf Three.js' (0,1,0) = Standard-Up.
+// Kurz: Kamera an den Ursprung, Rotation zurücksetzen - fertig, keine Trigonometrie
+// nötig. Was NICHT exakt stimmt: das Field-of-View (55°) ist nur ein Platzhalter,
+// nicht das echte Objektiv/Sensor-FOV aus der OpenCV-Kalibrierung - die Richtungen
+// zu den Markern stimmen exakt, die Bildausschnitt-"Enge" kann leicht abweichen.
+let inCameraView=false;
+const savedCamPos=new THREE.Vector3(), savedCamQuat=new THREE.Quaternion(), savedTarget=new THREE.Vector3();
+const toggleCamViewBtn=document.getElementById('toggleCamView');
+function setControlsEnabled(en){ controls.enabled = en && !inCameraView; }
+toggleCamViewBtn.onclick=()=>{
+ inCameraView=!inCameraView;
+ toggleCamViewBtn.classList.toggle('active',inCameraView);
+ if(inCameraView){
+  savedCamPos.copy(camera.position);
+  savedCamQuat.copy(camera.quaternion);
+  savedTarget.copy(controls.target);
+  camera.position.set(0,0,0);
+  camera.up.set(0,1,0);
+  camera.quaternion.identity();
+  camera.updateMatrixWorld();
+  controls.enabled=false;
+  document.getElementById('hint').textContent='Original-Kamera-Perspektive · Orbit deaktiviert · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
+ } else {
+  camera.position.copy(savedCamPos);
+  camera.quaternion.copy(savedCamQuat);
+  controls.target.copy(savedTarget);
+  controls.enabled=true;
+  controls.update();
+  document.getElementById('hint').textContent='Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
+ }
+};
 
 const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
 let draggingRoute=false,lastTouch=null;
@@ -180,16 +453,52 @@ function pick(e){
 }
 renderer.domElement.addEventListener('pointerdown',e=>{
  if(e.pointerType==='touch' || e.button===0){
-  const d=pick(e); if(d){draggingRoute=true;controls.enabled=false;addSegment(d)}
+  const d=pick(e); if(d){draggingRoute=true;setControlsEnabled(false);addSegment(d)}
  }
 });
-renderer.domElement.addEventListener('pointerup',()=>{draggingRoute=false;controls.enabled=true});
+renderer.domElement.addEventListener('pointerup',()=>{draggingRoute=false;setControlsEnabled(true)});
 renderer.domElement.addEventListener('pointermove',e=>{
  if(!draggingRoute)return;
- const d=pick(e); if(d){addSegment(d);draggingRoute=false;controls.enabled=true}
+ const d=pick(e); if(d){addSegment(d);draggingRoute=false;setControlsEnabled(true)}
 });
 
-function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera)} animate();
+// --- Maßstabsleiste (wie bei Kartendiensten): zeigt immer einen "schönen" Referenzwert
+// (z.B. 5 cm / 10 cm / 20 cm / 1 m) passend zum aktuellen Kamera-Zoom an, damit man jederzeit
+// weiß, in welchem realen Größenbereich man sich gerade bewegt.
+const scalebarFill = document.getElementById('scalebar-fill');
+const scalebarLabel = document.getElementById('scalebar-label');
+function niceScale(raw){
+  const exp = Math.floor(Math.log10(raw));
+  const base = raw / Math.pow(10, exp);
+  let niceBase;
+  if(base < 1.5) niceBase = 1;
+  else if(base < 3.5) niceBase = 2;
+  else if(base < 7.5) niceBase = 5;
+  else niceBase = 10;
+  return niceBase * Math.pow(10, exp);
+}
+function formatLen(m){
+  if(m < 1) return (m*100).toFixed(m<0.1?1:0) + ' cm';
+  return m.toFixed(m<10?2:1) + ' m';
+}
+function updateScaleBar(){
+  const dist = camera.position.distanceTo(controls.target);
+  const vFovRad = camera.fov * Math.PI/180;
+  const worldHeight = 2*dist*Math.tan(vFovRad/2);
+  const h = renderer.domElement.clientHeight || 1;
+  const worldPerPixel = worldHeight / h;
+  const targetPx = 90;
+  const rawWorld = targetPx*worldPerPixel;
+  const niceWorld = niceScale(rawWorld);
+  const px = niceWorld/worldPerPixel;
+  scalebarFill.style.width = Math.max(px,2)+'px';
+  scalebarLabel.textContent = formatLen(niceWorld);
+}
+
+function animate(){requestAnimationFrame(animate);if(!inCameraView)controls.update();updateScaleBar();renderer.render(scene,camera)} animate();
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 </script>
 </body></html>
+
+
+
