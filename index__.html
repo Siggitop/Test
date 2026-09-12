@@ -128,19 +128,14 @@ const markerB=readMarker(markerData.markerB);
 const markerDist = markerA.position.distanceTo(markerB.position) || 1;
 const UNIT = markerDist;
 
-const PIPE_R      = THREE.MathUtils.clamp(UNIT*0.045, 0.0018, 0.06);
+const PIPE_R      = THREE.MathUtils.clamp(UNIT*0.07,  0.003, 0.1);
 const SEG_LEN      = THREE.MathUtils.clamp(UNIT*0.55,  0.02,  1.0);
-const ENDPOINT_R   = THREE.MathUtils.clamp(UNIT*0.09,  0.0035, 0.09);
+const ENDPOINT_R   = THREE.MathUtils.clamp(UNIT*0.16,  0.006, 0.16);
 const HANDLE_OFF   = THREE.MathUtils.clamp(UNIT*0.42,  0.015, 0.48);
-const HANDLE_R     = THREE.MathUtils.clamp(UNIT*0.06,  0.0022, 0.06);
+const HANDLE_R     = THREE.MathUtils.clamp(UNIT*0.11,  0.004, 0.12);
 const HANDLE_LINE  = HANDLE_OFF*0.65;
-const MARKER_R     = THREE.MathUtils.clamp(UNIT*0.08,  0.006, 0.04);
+const MARKER_R     = THREE.MathUtils.clamp(UNIT*0.16,  0.01,  0.075);
 const MARKER_ARROW = THREE.MathUtils.clamp(UNIT*0.9,   0.06,  0.55);
-// Länge des angedeuteten Bestandsrohr-Stummels an jedem Marker (realer Wert, nicht
-// proportional zum Marker-Abstand skaliert - ein reales Rohrende ist immer ca. 10-20cm
-// sichtbar). Bei sehr kleinem Marker-Abstand wird trotzdem gekappt, damit sich die beiden
-// Stummel nicht mit dem gegenüberliegenden Marker überlappen.
-const STUB_LEN     = THREE.MathUtils.clamp(0.15, 0.02, markerDist*0.45);
 
 // Kamera & Controls proportional zum realen Abstand ausrichten, Blick auf die Mitte
 // zwischen A und B statt nur auf A.
@@ -204,27 +199,6 @@ function cylinderBetween(a,b,r=PIPE_R,active=false){
  m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize()); pipes.add(m);
  lastPipeMesh=m; lastPipeStart=a.clone(); lastPipeEnd=b.clone();
  return m;
-}
-// Deutet ein bereits vorhandenes Rohrstück an einem Marker an (kein Routing-Segment,
-// nur eine visuelle Andeutung "hier geht das reale Rohr weiter"). Läuft vom Marker aus
-// ein kurzes Stück in die übergebene Richtung und blendet dabei auf 0 Opazität aus.
-// Technik: mehrere kurze, sich leicht überlappende Zylinder-Segmente mit absteigender
-// Opazität statt eines echten Shaders - reicht für die Andeutung völlig aus.
-function fadingPipeStub(origin,dir,length,radius){
- const group=new THREE.Group();
- const segments=12, d=dir.clone().normalize(), stepLen=length/segments;
- for(let i=0;i<segments;i++){
-  const a=origin.clone().add(d.clone().multiplyScalar(i*stepLen));
-  const b=origin.clone().add(d.clone().multiplyScalar((i+1)*stepLen));
-  const mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
-  const opacity=Math.max(0,1-(i+0.5)/segments)*0.85;
-  const mat=new THREE.MeshStandardMaterial({color:0x5b6b82,metalness:.5,roughness:.4,transparent:true,opacity,depthWrite:false});
-  const m=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,stepLen*1.05,12),mat);
-  m.position.copy(mid);
-  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d);
-  group.add(m);
- }
- return group;
 }
 function elbow(pivot,fromDir,toDir,r=PIPE_R){
  const br=r*3.0;
@@ -326,12 +300,6 @@ function createMarkerVisual(marker, isStart){
 createMarkerVisual(markerA,true);
 createMarkerVisual(markerB,false);
 
-// Andeutung des jeweils real vorhandenen Rohrs an beiden Markern - startet am Marker-
-// Punkt und läuft in dessen eigener positiver X-Achse (= Rohrachse, rot eingezeichnet)
-// ein kurzes Stück weiter, bevor es ausfadet.
-markers.add(fadingPipeStub(markerA.position, markerA.xAxis, STUB_LEN, PIPE_R*0.9));
-markers.add(fadingPipeStub(markerB.position, markerB.xAxis, STUB_LEN, PIPE_R*0.9));
-
 // Hilfslinie zwischen den beiden Rohrenden.
 // Sie ist nur eine Orientierung und KEINE automatisch erzeugte Rohrleitung.
 const targetGuide=new THREE.Line(
@@ -352,7 +320,7 @@ function endpointMarker(p,active=true){
  handleDirs().forEach(v=>{
   const c=colorFor(v);
   const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(HANDLE_OFF));
-  const m=new THREE.Mesh(new THREE.OctahedronGeometry(HANDLE_R,0),new THREE.MeshBasicMaterial({color:c}));
+  const m=new THREE.Mesh(new THREE.SphereGeometry(HANDLE_R,12,12),new THREE.MeshBasicMaterial({color:c}));
   m.userData.dir=v; m.userData.route=true; o.add(m);
   const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-HANDLE_LINE)]),new THREE.LineBasicMaterial({color:c}));
   o.add(line); g.add(o);
