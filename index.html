@@ -11,25 +11,40 @@
 }
 html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif;touch-action:none}
 #app{position:fixed;inset:0} canvas{display:block}
-#top{position:fixed;left:0;right:0;top:0;height:64px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 14px;z-index:5;box-sizing:border-box}
-h1{font-size:19px;margin:0 18px 0 4px}.logo{font-size:27px}
+#top{position:fixed;left:0;right:0;top:0;top:env(safe-area-inset-top);display:flex;align-items:center;gap:8px;padding:10px 12px;z-index:5;box-sizing:border-box}
+#top button{width:42px;height:42px;padding:0;border-radius:50%;font-size:17px;background:var(--panel);box-shadow:0 3px 10px rgba(30,45,70,.12)}
+#top button#newPhoto{width:auto;border-radius:21px;padding:0 16px;font-size:13px}
 button,select,input{border:1px solid var(--border);background:#fff;color:var(--text);border-radius:10px;padding:11px 14px;font-size:14px;font-family:inherit}
 button{cursor:pointer}
 button.active{background:var(--accent);border-color:var(--accent-d);color:#fff}
 button.primary{background:var(--accent);border-color:var(--accent-d);color:#fff;font-weight:600}
 button.ghost{background:transparent}
 button:disabled{opacity:.45;cursor:not-allowed}
-#panel{position:fixed;right:14px;top:78px;width:275px;background:var(--panel);border:1px solid var(--border);border-radius:15px;padding:18px;z-index:5;box-sizing:border-box;box-shadow:0 6px 24px rgba(30,45,70,.08)}
+#panel{position:fixed;right:12px;top:64px;width:270px;max-width:calc(100vw - 24px);background:var(--panel);border:1px solid var(--border);border-radius:15px;padding:18px;z-index:5;box-sizing:border-box;box-shadow:0 6px 24px rgba(30,45,70,.08);max-height:calc(100vh - 90px);overflow-y:auto}
 #panel h2{margin:0 0 18px;font-size:20px}
 .step{display:flex;gap:12px;margin:13px 0}.num{min-width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700}
 .step b{display:block;margin-bottom:3px}.muted{color:var(--muted);font-size:13px;line-height:1.35}
 .row{display:flex;gap:7px;margin-top:8px}.row>*{flex:1}
-#bottom{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;background:var(--panel);padding:11px 20px;border-radius:12px;border:1px solid var(--border);color:var(--muted);box-shadow:0 4px 18px rgba(30,45,70,.08)}
-#hint{position:fixed;left:18px;bottom:18px;z-index:5;color:var(--muted);font-size:12px}
-#scalebar{position:fixed;left:18px;bottom:46px;z-index:5;display:flex;align-items:center;gap:8px;color:var(--text);font-size:12px;font-variant-numeric:tabular-nums}
+#hint{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:5;color:var(--muted);font-size:12px}
+/* Oben links unter der Icon-Leiste statt unten - dort ist am unteren Rand jetzt die
+   Aktionsleiste, die je nach Bildschirmbreite umbricht und sonst überlappen könnte. */
+#scalebar{position:fixed;left:14px;top:calc(64px + env(safe-area-inset-top));z-index:5;display:flex;align-items:center;gap:8px;color:var(--text);font-size:12px;font-variant-numeric:tabular-nums;background:var(--panel);padding:4px 10px;border-radius:8px;box-shadow:0 2px 8px rgba(30,45,70,.08)}
 #scalebar-track{height:6px;display:flex;align-items:flex-end}
 #scalebar-fill{height:6px;background:var(--text);border-left:2px solid var(--text);border-right:2px solid var(--text);box-sizing:border-box;transition:width .08s linear}
-@media(max-width:700px){#panel{width:220px;right:8px;top:72px;padding:12px}.step{margin:8px 0}.muted{font-size:11px}#top{height:56px}h1{font-size:16px;margin-right:4px}.desktopOnly{display:none}}
+#actionbar{position:fixed;left:0;right:0;bottom:0;bottom:env(safe-area-inset-bottom);z-index:5;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:8px;padding:10px 10px calc(10px + env(safe-area-inset-bottom))}
+#actionbar button{padding:12px 16px;border-radius:24px;font-size:14px;box-shadow:0 3px 10px rgba(30,45,70,.12);white-space:nowrap}
+#modeSwitch{display:flex;background:#fff;border:1px solid var(--border);border-radius:24px;overflow:hidden;box-shadow:0 3px 10px rgba(30,45,70,.12)}
+#modeSwitch button{border:0;border-radius:0;box-shadow:none;padding:12px 16px}
+@media(max-width:480px){
+  #panel{right:8px;left:8px;width:auto;top:60px;padding:14px}
+  .step{margin:8px 0}.muted{font-size:11px}
+  #top button{width:38px;height:38px;font-size:15px}
+  #actionbar button{padding:10px 13px;font-size:13px}
+  #modeSwitch button{padding:10px 13px}
+  .desktopOnly{display:none}
+  #hint{display:none}
+  #scalebar{font-size:11px;padding:3px 8px}
+}
 
 /* --- Aufnahme-Bildschirm --- */
 #captureScreen{position:fixed;inset:0;background:#0c1420;z-index:20;display:flex;flex-direction:column}
@@ -91,31 +106,29 @@ button:disabled{opacity:.45;cursor:not-allowed}
 
 <div id="app"></div>
 <div id="top">
- <span class="logo">⌁</span><h1>RohrRouting</h1>
- <button id="b90" class="modebtn active">Biegung 90°</button>
- <button id="b45" class="modebtn">Biegung 45°</button>
- <select id="diam"><option>Ø 20 mm</option><option>Ø 25 mm</option><option>Ø 32 mm</option><option>Ø 40 mm</option></select>
- <button id="undo">↶</button><button id="reset">Neu</button>
- <button id="autoroute" class="primary" title="Automatisch verbinden – danach frei anpassbar">⚡ Auto-Route</button>
+ <button id="togglePanel" title="Anleitung ein-/ausblenden">ℹ</button>
+ <button id="toggleGizmo" title="Routing-Gizmo ein-/ausblenden">⛶</button>
+ <button id="toggleCamView" title="Blick aus Sicht der Aufnahme-Kamera">📷</button>
  <span style="flex:1"></span>
- <button id="toggleGizmo" class="active" title="Routing-Gizmo ein-/ausblenden">Gizmo</button>
- <button id="togglePanel" class="active" title="Anleitung ein-/ausblenden">Anleitung</button>
- <button id="toggleCamView" title="Blick aus Sicht der Aufnahme-Kamera">📷 Kamera-Sicht</button>
  <button id="newPhoto" class="ghost" title="Neues Foto aufnehmen">↻ Neues Foto</button>
 </div>
-<div id="panel">
+<div id="panel" style="display:none">
  <h2>Rohr verlegen</h2>
  <div class="step"><span class="num">1</span><div><b>Auto-Route probieren</b><div class="muted">Verbindet beide Rohrenden automatisch mit 90°/45°-Bögen.</div></div></div>
  <div class="step"><span class="num">2</span><div><b>Anpassen</b><div class="muted">Rohrende antippen, Richtung ziehen/tippen – jederzeit möglich.</div></div></div>
  <div class="step"><span class="num">3</span><div><b>Segment erstellen</b><div class="muted">Gerade, 90° oder 45° wird automatisch erzeugt.</div></div></div>
  <hr style="border:0;border-top:1px solid var(--border)">
- <b>Aktueller Modus</b>
- <div class="row"><button id="mode">Biegung 90°</button></div>
- <div style="margin-top:14px"><b>Rohrdurchmesser</b><div class="muted" id="dtext">20 mm</div></div><div style="margin-top:14px"><b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div></div>
+ <b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div>
 </div>
-<div id="bottom">Startpunkt = ArUco-Marker A · X-Achse = Rohrachse · Ziel = Marker B</div>
+<div id="actionbar">
+ <div id="modeSwitch"><button id="b90" class="modebtn active">90°</button><button id="b45" class="modebtn">45°</button></div>
+ <button id="autoroute" class="primary" title="Automatisch verbinden – danach frei anpassbar">⚡ Auto-Route</button>
+ <button id="undo" title="Letztes Segment zurücknehmen">↶ Rückgängig</button>
+ <button id="reset" title="Route verwerfen">⟲ Neu</button>
+</div>
+
 <div id="scalebar"><div id="scalebar-track"><div id="scalebar-fill"></div></div><span id="scalebar-label">–</span></div>
-<div id="hint">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
+<div id="hint" class="desktopOnly">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
 
 <!-- js-aruco2: reine JS-Portierung der ArUco-Erkennung, läuft komplett im Browser.
      cv.js MUSS vor aruco.js geladen werden (aruco.js greift beim Laden auf das globale
@@ -512,41 +525,70 @@ controls.minDistance = markerDist*0.3;
 controls.maxDistance = markerDist*30;
 controls.update();
 
-// Tischebene: bevorzugt aus dem echten Schwerkraftvektor (zuverlässiger als die Annahme
-// "beide Marker liegen exakt auf derselben Fläche") - Marker-Koplanarität dient nur noch
-// als Konsistenz-Check und Fallback, falls keine Schwerkraftdaten vorliegen.
-const abDir = new THREE.Vector3().subVectors(markerB.position, markerA.position).normalize();
-const rawN1 = new THREE.Vector3().crossVectors(abDir, markerA.xAxis).normalize();
-const rawN2 = new THREE.Vector3().crossVectors(abDir, markerB.xAxis).normalize();
-let planeAngleDeg = THREE.MathUtils.radToDeg(rawN1.angleTo(rawN2));
-if(planeAngleDeg>90) planeAngleDeg = 180-planeAngleDeg;
-const n2aligned = rawN1.dot(rawN2) < 0 ? rawN2.clone().negate() : rawN2.clone();
-const markerBasedNormal = new THREE.Vector3().addVectors(rawN1, n2aligned).normalize();
-
-let tableNormal, usedGravity = false;
+// Horizontale Referenzebene: NUR aus dem echten Schwerkraftvektor, keine Ersatz-Ebene aus
+// Marker-Koplanarität mehr (die konnte je nach Anbau-Situation der Marker auch schräg oder
+// eher senkrecht ausfallen und wurde fälschlich als "die Horizontale" wahrgenommen). Zur
+// reinen Information landet die Marker-basierte Schätzung nur noch in der Konsole.
+let usedGravity = false, tableNormal = null;
+{
+  const abDir = new THREE.Vector3().subVectors(markerB.position, markerA.position).normalize();
+  const rawN1 = new THREE.Vector3().crossVectors(abDir, markerA.xAxis).normalize();
+  const rawN2 = new THREE.Vector3().crossVectors(abDir, markerB.xAxis).normalize();
+  let planeAngleDeg = THREE.MathUtils.radToDeg(rawN1.angleTo(rawN2));
+  if(planeAngleDeg>90) planeAngleDeg = 180-planeAngleDeg;
+  console.log('(Nur Info) Ebenen-Konsistenz A/B aus Markern allein:', planeAngleDeg.toFixed(2), '° Abweichung (0° = perfekt koplanar) - wird nicht mehr angezeigt.');
+}
 if(markerData.gravityDown){
   tableNormal = cvToThree(markerData.gravityDown).normalize();
   usedGravity = true;
-  const devDeg = THREE.MathUtils.radToDeg(tableNormal.angleTo(markerBasedNormal));
-  console.log('Tischebene: Schwerkraftvektor verwendet. Abweichung zur Marker-Schätzung:', Math.min(devDeg,180-devDeg).toFixed(1),'°');
 } else {
-  tableNormal = markerBasedNormal;
-  console.log('Tischebene: kein Schwerkraftvektor vorhanden, aus Marker-Koplanarität geschätzt.');
+  console.log('Keine horizontale Referenzebene angezeigt: kein Schwerkraftvektor vorhanden (Sensor bei der Aufnahme nicht verfügbar/erlaubt).');
 }
-console.log('Ebenen-Konsistenz A/B (nur Marker):', planeAngleDeg.toFixed(2), '° Abweichung (0° = perfekt koplanar)');
 
-const planeSize = Math.max(markerDist*6, 0.3);
-const tableGrid = new THREE.GridHelper(planeSize,16,0x9aa7ba,0xc3ccd8);
-tableGrid.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tableNormal);
-tableGrid.position.copy(midAB);
-scene.add(tableGrid);
-const tablePlane = new THREE.Mesh(
-  new THREE.PlaneGeometry(planeSize,planeSize),
-  new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.4,side:THREE.DoubleSide})
-);
-tablePlane.quaternion.copy(tableGrid.quaternion);
-tablePlane.position.copy(midAB);
-scene.add(tablePlane);
+function makeLabelSprite(text,color){
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  const fontPx=54;
+  ctx.font=`600 ${fontPx}px system-ui,-apple-system,sans-serif`;
+  const textW=ctx.measureText(text).width;
+  canvas.width=Math.ceil(textW)+56; canvas.height=fontPx*1.9;
+  ctx.font=`600 ${fontPx}px system-ui,-apple-system,sans-serif`;
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  ctx.beginPath();
+  ctx.roundRect(0,0,canvas.width,canvas.height,canvas.height*0.25);
+  ctx.fill();
+  ctx.fillStyle=color; ctx.textBaseline='middle';
+  ctx.fillText(text,28,canvas.height/2);
+  const tex=new THREE.CanvasTexture(canvas);
+  const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthTest:false,transparent:true}));
+  const h=UNIT*0.22, w=h*(canvas.width/canvas.height);
+  sprite.scale.set(w,h,1);
+  return sprite;
+}
+
+if(usedGravity){
+  // Darf ruhig 1m unterhalb der Marker liegen (dient nur als Referenz für "waagerecht",
+  // nicht als exakte reale Standfläche) - tableNormal zeigt bereits nach unten.
+  const planeCenter = midAB.clone().add(tableNormal.clone().multiplyScalar(1.0));
+  const planeSize = Math.max(markerDist*6, 0.3);
+  const gridQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), tableNormal);
+  const tableGrid = new THREE.GridHelper(planeSize,16,0xC98A2E,0xE7C892);
+  tableGrid.quaternion.copy(gridQuat);
+  tableGrid.position.copy(planeCenter);
+  scene.add(tableGrid);
+  const tablePlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(planeSize,planeSize),
+    new THREE.MeshBasicMaterial({color:0xF4D9A0,transparent:true,opacity:.22,side:THREE.DoubleSide})
+  );
+  tablePlane.quaternion.copy(gridQuat);
+  tablePlane.position.copy(planeCenter);
+  scene.add(tablePlane);
+  const label=makeLabelSprite('Horizontale (Schwerkraft)', '#8a5a12');
+  // Minimal in Richtung "oben" (-tableNormal) versetzt, damit das Label nicht exakt in
+  // der Gitterebene liegt (Z-Fighting) und leicht darüber schwebt statt dahinter zu liegen.
+  label.position.copy(planeCenter).addScaledVector(tableNormal, -planeSize*0.02);
+  scene.add(label);
+}
 
 let current=markerA.position.clone();
 let direction=markerA.xAxis.clone();
@@ -554,7 +596,8 @@ let direction=markerA.xAxis.clone();
 let history=[], selectedMode='b90';
 
 document.getElementById('markerInfo').textContent =
-  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm · Ebene: ${usedGravity?'Schwerkraft':'Marker-Schätzung'}`;
+  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm` +
+  (usedGravity ? ' · Horizontale aus Schwerkraft-Sensor' : ' · keine Horizontale (Sensor war bei der Aufnahme nicht verfügbar)');
 
 console.log('ArUco Marker A:', markerA);
 console.log('ArUco Marker B:', markerB);
@@ -852,14 +895,15 @@ document.getElementById('autoroute').onclick=()=>{
 };
 
 ['b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
- selectedMode=id; document.querySelectorAll('#top button.modebtn').forEach(b=>b.classList.remove('active'));
- document.getElementById(id).classList.add('active'); document.getElementById('mode').textContent=id==='b90'?'Biegung 90°':'Biegung 45°';
+ selectedMode=id; document.querySelectorAll('#modeSwitch button.modebtn').forEach(b=>b.classList.remove('active'));
+ document.getElementById(id).classList.add('active');
  endpointMarker(current);
 });
 document.getElementById('undo').onclick=undo; document.getElementById('reset').onclick=reset;
-document.getElementById('diam').onchange=e=>document.getElementById('dtext').textContent=e.target.value.replace('Ø ','');
-document.getElementById('mode').onclick=()=>document.getElementById(selectedMode).click();
 
+// Gizmo (Routing-Griffe) startet ausgeblendet, um den Blick auf die Rohre frei zu halten -
+// wird bei Bedarf über den Knopf oben eingeblendet.
+joints.visible=false;
 const toggleGizmoBtn=document.getElementById('toggleGizmo');
 toggleGizmoBtn.onclick=()=>{ joints.visible=!joints.visible; toggleGizmoBtn.classList.toggle('active',joints.visible); };
 
@@ -901,6 +945,9 @@ toggleCamViewBtn.onclick=()=>{
 const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
 let draggingRoute=false;
 function pick(e){
+ // THREE.Raycaster prüft .visible NICHT selbst - bei ausgeblendetem Gizmo würden sonst
+ // unsichtbare Griffe weiterhin "blind" antippbar bleiben. Deshalb hier explizit sperren.
+ if(!joints.visible) return null;
  const r=renderer.domElement.getBoundingClientRect();
  const x=(e.clientX-r.left)/r.width*2-1,y=-((e.clientY-r.top)/r.height)*2+1;
  mouse.set(x,y);ray.setFromCamera(mouse,camera);
