@@ -1,0 +1,180 @@
+/**
+ * style.css
+ * ---------
+ * Gesamtes Styling der App in zwei Blöcken:
+ *  1. Die 3D-Ansicht (Icon-Leiste oben, Anleitungs-Panel, Aktionsleiste unten, Maßstab,
+ *     Hinweistext) - alles hell/technisch gehalten.
+ *  2. Der Aufnahme-Bildschirm (Kamera-Vollbild, Kalibrierungs-Panel, Auswertungs-Overlay)
+ *     - bewusst dunkel gehalten, das ist beim Fotografieren im Freien/in der Werkstatt
+ *     augenfreundlicher und lässt die Kamera-Vorschau besser wirken.
+ */
+
+:root {
+  --bg: #eef1f6;
+  --panel: #ffffffee;
+  --panel2: #f5f7fb;
+  --text: #1c2b3f;
+  --muted: #5b6b82;
+  --border: #d7dee7;
+  --accent: #2468e8;
+  --accent-d: #0f4fc4;
+  --danger: #dc2626;
+  --ok: #1a9c6b;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  touch-action: none;
+}
+
+/* ===== 3D-Ansicht ===== */
+
+#app { position: fixed; inset: 0; }
+canvas { display: block; }
+
+#top {
+  position: fixed; left: 0; right: 0; top: 0; top: env(safe-area-inset-top);
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  z-index: 5; box-sizing: border-box;
+}
+#top button {
+  width: 42px; height: 42px; padding: 0; border-radius: 50%; font-size: 17px;
+  background: var(--panel); box-shadow: 0 3px 10px rgba(30, 45, 70, .12);
+}
+#top button#newPhoto { width: auto; border-radius: 21px; padding: 0 16px; font-size: 13px; }
+
+button, select, input {
+  border: 1px solid var(--border); background: #fff; color: var(--text);
+  border-radius: 10px; padding: 11px 14px; font-size: 14px; font-family: inherit;
+}
+button { cursor: pointer; }
+button.active { background: var(--accent); border-color: var(--accent-d); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent-d); color: #fff; font-weight: 600; }
+button.ghost { background: transparent; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+#panel {
+  position: fixed; right: 12px; top: 64px; width: 270px; max-width: calc(100vw - 24px);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 15px;
+  padding: 18px; z-index: 5; box-sizing: border-box;
+  box-shadow: 0 6px 24px rgba(30, 45, 70, .08);
+  max-height: calc(100vh - 90px); overflow-y: auto;
+}
+#panel h2 { margin: 0 0 18px; font-size: 20px; }
+.step { display: flex; gap: 12px; margin: 13px 0; }
+.num {
+  min-width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+  color: #fff; display: grid; place-items: center; font-weight: 700;
+}
+.step b { display: block; margin-bottom: 3px; }
+.muted { color: var(--muted); font-size: 13px; line-height: 1.35; }
+.row { display: flex; gap: 7px; margin-top: 8px; }
+.row > * { flex: 1; }
+
+#hint {
+  position: fixed; left: 14px; bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 5; color: var(--muted); font-size: 12px;
+}
+/* Oben links unter der Icon-Leiste statt unten - dort ist am unteren Rand die
+   Aktionsleiste, die je nach Bildschirmbreite umbricht und sonst überlappen könnte. */
+#scalebar {
+  position: fixed; left: 14px; top: calc(64px + env(safe-area-inset-top)); z-index: 5;
+  display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px;
+  font-variant-numeric: tabular-nums; background: var(--panel); padding: 4px 10px;
+  border-radius: 8px; box-shadow: 0 2px 8px rgba(30, 45, 70, .08);
+}
+#scalebar-track { height: 6px; display: flex; align-items: flex-end; }
+#scalebar-fill {
+  height: 6px; background: var(--text); border-left: 2px solid var(--text);
+  border-right: 2px solid var(--text); box-sizing: border-box; transition: width .08s linear;
+}
+
+#actionbar {
+  position: fixed; left: 0; right: 0; bottom: 0; bottom: env(safe-area-inset-bottom);
+  z-index: 5; display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  gap: 8px; padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+}
+#actionbar button {
+  padding: 12px 16px; border-radius: 24px; font-size: 14px;
+  box-shadow: 0 3px 10px rgba(30, 45, 70, .12); white-space: nowrap;
+}
+#modeSwitch {
+  display: flex; background: #fff; border: 1px solid var(--border); border-radius: 24px;
+  overflow: hidden; box-shadow: 0 3px 10px rgba(30, 45, 70, .12);
+}
+#modeSwitch button { border: 0; border-radius: 0; box-shadow: none; padding: 12px 16px; }
+
+@media (max-width: 480px) {
+  #panel { right: 8px; left: 8px; width: auto; top: 60px; padding: 14px; }
+  .step { margin: 8px 0; }
+  .muted { font-size: 11px; }
+  #top button { width: 38px; height: 38px; font-size: 15px; }
+  #actionbar button { padding: 10px 13px; font-size: 13px; }
+  #modeSwitch button { padding: 10px 13px; }
+  .desktopOnly { display: none; }
+  #hint { display: none; }
+  #scalebar { font-size: 11px; padding: 3px 8px; }
+}
+
+/* ===== Aufnahme-Bildschirm ===== */
+
+#captureScreen { position: fixed; inset: 0; background: #0c1420; z-index: 20; display: flex; flex-direction: column; }
+#camVideo { flex: 1; width: 100%; height: 100%; object-fit: cover; background: #000; }
+#captureTop {
+  position: absolute; left: 0; right: 0; top: 0; padding: 14px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; z-index: 2;
+}
+#captureTop .pill {
+  background: rgba(12, 20, 32, .72); color: #eef4ff; border-radius: 12px; padding: 8px 12px;
+  font-size: 12px; line-height: 1.4; max-width: 220px; backdrop-filter: blur(4px);
+}
+#captureBottom {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 22px 18px calc(22px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: center; gap: 12px; z-index: 2;
+  background: linear-gradient(to top, rgba(0, 0, 0, .55), transparent);
+}
+#shutter { width: 74px; height: 74px; border-radius: 50%; background: #fff; border: 5px solid rgba(255, 255, 255, .5); padding: 0; }
+#shutter:active { background: #dbe6ff; }
+#shutter:disabled { opacity: .4; }
+#captureStatus { color: #fff; font-size: 13px; text-align: center; min-height: 18px; }
+#demoLink { background: none; border: none; color: #9db4d9; text-decoration: underline; font-size: 12px; padding: 4px; }
+
+#calibToggle { background: rgba(12, 20, 32, .72); color: #eef4ff; border: 1px solid rgba(255, 255, 255, .25); font-size: 12px; padding: 7px 11px; border-radius: 10px; }
+#calibBox {
+  position: absolute; right: 14px; left: 14px; top: 64px; background: rgba(12, 20, 32, .94);
+  color: #eef4ff; border-radius: 12px; padding: 14px; font-size: 12px; max-width: 340px;
+  margin-left: auto; z-index: 3; display: none; backdrop-filter: blur(4px);
+  max-height: 75vh; overflow-y: auto;
+}
+#calibBox.open { display: block; }
+#calibBox label { display: block; margin-top: 7px; color: #b9c8e2; }
+#calibBox input[type=number], #calibBox input[type=file] {
+  width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px;
+  background: #132038; border-color: #2c3f5e; color: #eef4ff; border-radius: 7px;
+}
+.calibTabs { display: flex; gap: 4px; margin: 4px 0 10px; }
+.calibTab { flex: 1; padding: 7px 4px; font-size: 11px; background: #132038; border-color: #2c3f5e; color: #b9c8e2; border-radius: 8px; }
+.calibTab.active { background: var(--accent); color: #fff; border-color: var(--accent-d); }
+#calibBox button { padding: 9px 10px; font-size: 12px; }
+
+#analyzeOverlay {
+  position: fixed; inset: 0; background: rgba(12, 20, 32, .88); color: #fff; z-index: 30;
+  display: none; align-items: center; justify-content: center; flex-direction: column;
+  gap: 14px; text-align: center; padding: 20px; box-sizing: border-box;
+}
+#analyzeOverlay.show { display: flex; }
+.spinner {
+  width: 38px; height: 38px; border-radius: 50%; border: 4px solid rgba(255, 255, 255, .25);
+  border-top-color: #fff; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#resultBox { background: #141f30; border-radius: 14px; padding: 18px; max-width: 340px; text-align: left; font-size: 13px; line-height: 1.5; }
+#resultBox b { display: block; margin-bottom: 6px; font-size: 15px; }
+.errText { color: #ff8a8a; }
+.okText { color: #7be0b0; }

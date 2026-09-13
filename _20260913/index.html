@@ -1,0 +1,1321 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>RohrRouting – Foto → 3D</title>
+<style>
+:root{
+  --bg:#eef1f6; --panel:#ffffffee; --panel2:#f5f7fb; --text:#1c2b3f; --muted:#5b6b82;
+  --border:#d7dee7; --accent:#2468e8; --accent-d:#0f4fc4; --danger:#dc2626; --ok:#1a9c6b;
+}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif;touch-action:none}
+#app{position:fixed;inset:0} canvas{display:block}
+#top{position:fixed;left:0;right:0;top:0;top:env(safe-area-inset-top);display:flex;align-items:center;gap:8px;padding:10px 12px;z-index:5;box-sizing:border-box}
+#top button{width:42px;height:42px;padding:0;border-radius:50%;font-size:17px;background:var(--panel);box-shadow:0 3px 10px rgba(30,45,70,.12)}
+#top button#newPhoto{width:auto;border-radius:21px;padding:0 16px;font-size:13px}
+button,select,input{border:1px solid var(--border);background:#fff;color:var(--text);border-radius:10px;padding:11px 14px;font-size:14px;font-family:inherit}
+button{cursor:pointer}
+button.active{background:var(--accent);border-color:var(--accent-d);color:#fff}
+button.primary{background:var(--accent);border-color:var(--accent-d);color:#fff;font-weight:600}
+button.ghost{background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+#panel{position:fixed;right:12px;top:64px;width:270px;max-width:calc(100vw - 24px);background:var(--panel);border:1px solid var(--border);border-radius:15px;padding:18px;z-index:5;box-sizing:border-box;box-shadow:0 6px 24px rgba(30,45,70,.08);max-height:calc(100vh - 90px);overflow-y:auto}
+#panel h2{margin:0 0 18px;font-size:20px}
+.step{display:flex;gap:12px;margin:13px 0}.num{min-width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700}
+.step b{display:block;margin-bottom:3px}.muted{color:var(--muted);font-size:13px;line-height:1.35}
+.row{display:flex;gap:7px;margin-top:8px}.row>*{flex:1}
+#hint{position:fixed;left:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:5;color:var(--muted);font-size:12px}
+/* Oben links unter der Icon-Leiste statt unten - dort ist am unteren Rand jetzt die
+   Aktionsleiste, die je nach Bildschirmbreite umbricht und sonst überlappen könnte. */
+#scalebar{position:fixed;left:14px;top:calc(64px + env(safe-area-inset-top));z-index:5;display:flex;align-items:center;gap:8px;color:var(--text);font-size:12px;font-variant-numeric:tabular-nums;background:var(--panel);padding:4px 10px;border-radius:8px;box-shadow:0 2px 8px rgba(30,45,70,.08)}
+#scalebar-track{height:6px;display:flex;align-items:flex-end}
+#scalebar-fill{height:6px;background:var(--text);border-left:2px solid var(--text);border-right:2px solid var(--text);box-sizing:border-box;transition:width .08s linear}
+#actionbar{position:fixed;left:0;right:0;bottom:0;bottom:env(safe-area-inset-bottom);z-index:5;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:8px;padding:10px 10px calc(10px + env(safe-area-inset-bottom))}
+#actionbar button{padding:12px 16px;border-radius:24px;font-size:14px;box-shadow:0 3px 10px rgba(30,45,70,.12);white-space:nowrap}
+#modeSwitch{display:flex;background:#fff;border:1px solid var(--border);border-radius:24px;overflow:hidden;box-shadow:0 3px 10px rgba(30,45,70,.12)}
+#modeSwitch button{border:0;border-radius:0;box-shadow:none;padding:12px 16px}
+@media(max-width:480px){
+  #panel{right:8px;left:8px;width:auto;top:60px;padding:14px}
+  .step{margin:8px 0}.muted{font-size:11px}
+  #top button{width:38px;height:38px;font-size:15px}
+  #actionbar button{padding:10px 13px;font-size:13px}
+  #modeSwitch button{padding:10px 13px}
+  .desktopOnly{display:none}
+  #hint{display:none}
+  #scalebar{font-size:11px;padding:3px 8px}
+}
+
+/* --- Aufnahme-Bildschirm --- */
+#captureScreen{position:fixed;inset:0;background:#0c1420;z-index:20;display:flex;flex-direction:column}
+#camVideo{flex:1;width:100%;height:100%;object-fit:cover;background:#000}
+#captureTop{position:absolute;left:0;right:0;top:0;padding:14px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;z-index:2}
+#captureTop .pill{background:rgba(12,20,32,.72);color:#eef4ff;border-radius:12px;padding:8px 12px;font-size:12px;line-height:1.4;max-width:220px;backdrop-filter:blur(4px)}
+#captureBottom{position:absolute;left:0;right:0;bottom:0;padding:22px 18px calc(22px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:12px;z-index:2;background:linear-gradient(to top,rgba(0,0,0,.55),transparent)}
+#shutter{width:74px;height:74px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.5);padding:0}
+#shutter:active{background:#dbe6ff}
+#shutter:disabled{opacity:.4}
+#captureStatus{color:#fff;font-size:13px;text-align:center;min-height:18px}
+#demoLink{background:none;border:none;color:#9db4d9;text-decoration:underline;font-size:12px;padding:4px}
+#calibToggle{background:rgba(12,20,32,.72);color:#eef4ff;border:1px solid rgba(255,255,255,.25);font-size:12px;padding:7px 11px;border-radius:10px}
+#calibBox{position:absolute;right:14px;left:14px;top:64px;background:rgba(12,20,32,.94);color:#eef4ff;border-radius:12px;padding:14px;font-size:12px;max-width:340px;margin-left:auto;z-index:3;display:none;backdrop-filter:blur(4px);max-height:75vh;overflow-y:auto}
+#calibBox.open{display:block}
+#calibBox label{display:block;margin-top:7px;color:#b9c8e2}
+#calibBox input[type=number],#calibBox input[type=file]{width:100%;box-sizing:border-box;padding:6px 8px;font-size:12px;background:#132038;border-color:#2c3f5e;color:#eef4ff;border-radius:7px}
+.calibTabs{display:flex;gap:4px;margin:4px 0 10px}
+.calibTab{flex:1;padding:7px 4px;font-size:11px;background:#132038;border-color:#2c3f5e;color:#b9c8e2;border-radius:8px}
+.calibTab.active{background:var(--accent);color:#fff;border-color:var(--accent-d)}
+#calibBox button{padding:9px 10px;font-size:12px}
+#analyzeOverlay{position:fixed;inset:0;background:rgba(12,20,32,.88);color:#fff;z-index:30;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;padding:20px;box-sizing:border-box}
+#analyzeOverlay.show{display:flex}
+.spinner{width:38px;height:38px;border-radius:50%;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#resultBox{background:#141f30;border-radius:14px;padding:18px;max-width:340px;text-align:left;font-size:13px;line-height:1.5}
+#resultBox b{display:block;margin-bottom:6px;font-size:15px}
+.errText{color:#ff8a8a}
+.okText{color:#7be0b0}
+</style>
+</head>
+<body>
+
+<div id="captureScreen">
+ <video id="camVideo" playsinline autoplay muted></video>
+ <div id="captureTop">
+  <div class="pill" id="gravityReadout">Schwerkraft-Sensor: wird gestartet …</div>
+  <button id="calibToggle">⚙ Kalibrierung</button>
+ </div>
+ <div id="calibBox">
+  <b>Kamera-Kalibrierung</b>
+  <div class="muted" style="color:#8ea3c4;margin:4px 0 8px;font-size:11px;line-height:1.4">Ohne Kalibrierung wird fx/fy grob aus der Bildbreite geschätzt - für genaue Ergebnisse eine der drei Optionen nutzen.</div>
+
+  <div class="calibTabs">
+   <button id="calibTabNpz" class="calibTab active">.npz</button>
+   <button id="calibTabCharuco" class="calibTab">Kalibrierblatt</button>
+   <button id="calibTabManual" class="calibTab">Manuell</button>
+  </div>
+
+  <div id="calibPaneNpz" class="calibPane">
+   <div class="muted" style="color:#b9c8e2;margin-bottom:6px">Deine camera_calib.npz (erwartet Arrays "K" und "dist", genau wie im Python-Skript).</div>
+   <input type="file" id="npzFile" accept=".npz">
+   <div id="npzStatus" class="muted" style="margin-top:6px;color:#b9c8e2"></div>
+  </div>
+
+  <div id="calibPaneCharuco" class="calibPane" style="display:none">
+   <div class="muted" style="color:#b9c8e2;margin-bottom:6px">Statt eines echten OpenCV-ChArUco-Boards (dessen genaues Layout sich ohne Test an echter Hardware nicht zuverlässig nachbilden lässt) nutzt das hier ein eigenes Raster aus denselben ArUco-Markern, die die App schon erkennt. Schätzt fx/fy + Bildmitte, <b>keine Verzeichnung</b> (dafür .npz verwenden).</div>
+   <button id="charucoGenerate" style="width:100%">📄 Kalibrierblatt erzeugen &amp; herunterladen</button>
+   <label style="margin-top:8px">Markergröße auf dem Blatt (mm)<input id="charucoSquare" type="number" step="0.1" value="30"></label>
+   <button id="charucoShot" style="width:100%;margin-top:8px">📷 Ausgedrucktes Blatt fotografieren</button>
+   <div id="charucoStatus" class="muted" style="margin-top:6px;color:#b9c8e2"></div>
+  </div>
+
+  <div id="calibPaneManual" class="calibPane" style="display:none">
+   <label>fx (px)<input id="calFx" type="number" step="1"></label>
+   <label>fy (px)<input id="calFy" type="number" step="1"></label>
+   <label>cx (px)<input id="calCx" type="number" step="1"></label>
+   <label>cy (px)<input id="calCy" type="number" step="1"></label>
+  </div>
+
+  <label style="margin-top:10px">Markerkante A/B (m)<input id="calMarkerLen" type="number" step="0.001" value="0.0705"></label>
+  <div id="calibSummary" class="muted" style="margin-top:8px;color:#7be0b0"></div>
+ </div>
+ <canvas id="charucoCanvas" style="display:none"></canvas>
+ <div id="captureBottom">
+  <div id="captureStatus">Beide ArUco-Marker ins Bild halten, ruhig halten, dann auslösen.</div>
+  <button id="shutter" aria-label="Foto aufnehmen"></button>
+  <button id="demoLink">Demo-Daten laden (ohne Kamera testen)</button>
+ </div>
+</div>
+
+<div id="analyzeOverlay">
+ <div class="spinner" id="analyzeSpinner"></div>
+ <div id="analyzeText">Bild wird analysiert …</div>
+ <div id="resultBox" style="display:none"></div>
+</div>
+
+<canvas id="captureCanvas" style="display:none"></canvas>
+
+<div id="app"></div>
+<div id="top">
+ <button id="togglePanel" title="Anleitung ein-/ausblenden">ℹ</button>
+ <button id="toggleGizmo" title="Routing-Gizmo ein-/ausblenden">⛶</button>
+ <button id="toggleCamView" title="Blick aus Sicht der Aufnahme-Kamera">📷</button>
+ <span style="flex:1"></span>
+ <button id="newPhoto" class="ghost" title="Neues Foto aufnehmen">↻ Neues Foto</button>
+</div>
+<div id="panel" style="display:none">
+ <h2>Rohr verlegen</h2>
+ <div class="step"><span class="num">1</span><div><b>Auto-Route probieren</b><div class="muted">Verbindet beide Rohrenden automatisch mit 90°/45°-Bögen.</div></div></div>
+ <div class="step"><span class="num">2</span><div><b>Anpassen</b><div class="muted">Rohrende antippen, Richtung ziehen/tippen – jederzeit möglich.</div></div></div>
+ <div class="step"><span class="num">3</span><div><b>Segment erstellen</b><div class="muted">Gerade, 90° oder 45° wird automatisch erzeugt.</div></div></div>
+ <hr style="border:0;border-top:1px solid var(--border)">
+ <b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div>
+</div>
+<div id="actionbar">
+ <div id="modeSwitch"><button id="b90" class="modebtn active">90°</button><button id="b45" class="modebtn">45°</button></div>
+ <button id="autoroute" class="primary" title="Automatisch verbinden – danach frei anpassbar">⚡ Auto-Route</button>
+ <button id="undo" title="Letztes Segment zurücknehmen">↶ Rückgängig</button>
+ <button id="reset" title="Route verwerfen">⟲ Neu</button>
+</div>
+
+<div id="scalebar"><div id="scalebar-track"><div id="scalebar-fill"></div></div><span id="scalebar-label">–</span></div>
+<div id="hint" class="desktopOnly">Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera</div>
+
+<!-- js-aruco2: reine JS-Portierung der ArUco-Erkennung, läuft komplett im Browser.
+     cv.js MUSS vor aruco.js geladen werden (aruco.js greift beim Laden auf das globale
+     CV-Objekt zu). Beide als klassische (nicht type=module) Scripts, damit sie vor dem
+     folgenden Modul-Script ausgeführt sind und AR/CV global verfügbar machen. -->
+<script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/aruco.js"></script>
+<script>
+// Echtes OpenCV DICT_6X6_250 (cv2.aruco.DICT_6X6_250) als Custom-Dictionary registrieren.
+// js-aruco2 bringt dieses Dictionary nicht mit (nur 'ARUCO' und 'ARUCO_MIP_36h12').
+// Die 250 Codes unten sind NICHT frei erfunden: sie wurden aus dem offiziellen OpenCV-
+// Quellcode (modules/objdetect/src/aruco/predefined_dictionaries.hpp, DICT_6X6_1000_BYTES,
+// erste 250 Marker, Rotation 0) extrahiert und bit-genau nach dem gleichen Schema gepackt,
+// das OpenCV selbst verwendet (Dictionary::getByteListFromBits: zeilenweise, MSB zuerst).
+// Kontrollrechnung: die minimale Hamming-Distanz der ersten 250 Codes ergibt exakt 11 -
+// das ist genau der von OpenCV dokumentierte Wert für DICT_6X6_250 (maxCorrectionBits=5,
+// d.h. minDistance=11). Diese Übereinstimmung ist ein starkes Indiz, dass die Extraktion
+// korrekt ist. Getestet wurde dies trotzdem nicht an einem echten Foto in dieser Umgebung -
+// falls beim ersten echten Test gar keine Marker erkannt werden, ist der erste Verdacht
+// die Bit-Abtastreihenfolge von js-aruco2 (siehe AR.Detector, Zeile mit "markSize").
+AR.DICTIONARIES.DICT_6X6_250 = {
+  nBits: 36,
+  tau: 11,
+  codeList: [0x1e3dd82a6,0xefba3891,0x15907eacd,0xc91b3069e,0xd607d6e15,0xd8e8e0e68,0x4268b41f5,0x88a50f29a,0x307d524fd,0x3c2f34b3c,0x45dfc74e3,0x48d85b257,0x710558fc6,0x86dcfad07,0x8d72a93f6,0xa2b89dcde,0x9fd1e9c4,0x154dbd18f,0x300a310e2,0x4807efafd,0x56df11db6,0x66883274c,0x76e8cb781,0x9a53d9cf3,0xa9cb84024,0xc67549490,0xc1d288941,0xe7480852b,0xea2fca848,0xe963b77b1,0xfa36652af,0x65bff7bd,0x541d72d6,0xcf7246a2,0x1338a39eb,0x15a893e74,0x3a417ee9e,0x4f11e26c0,0x530db6d20,0x589bfae34,0x6409e8a0b,0x60537a891,0x6159069ba,0x6bff78d7b,0x70ad96a4f,0x75846f71a,0x7a95192fc,0x8609760aa,0x8a2d44c3f,0x93eb78b14,0x988da84d4,0x9ede2b3c8,0xa529e07b8,0xb593b855f,0xb7f8e426f,0xbc205225e,0xc04487765,0xc4c324259,0xc5a91bd8d,0xce73e6b2c,0xcd0ca6272,0xc9435d44d,0xcfbe80f34,0xe57d15877,0xefc6858e9,0xf77ef3772,0x2ce43f254,0x2bdcff4b3,0x37c7ddbda,0xa1a254e0f,0xa982c1bb5,0xd81b49b08,0x35829f86,0x7c4095fc,0xfe26617b,0x144836441,0x10ad5ffb7,0x12829553f,0x16e13184c,0x187a496b0,0x1ae886112,0x1913ae0a1,0x1b67b5a17,0x25dc95f0b,0x288961f76,0x3354146aa,0x31c16c1f7,0x33cb18c66,0x3ecfe490f,0x464518a3f,0x44ba70b67,0x419c623e8,0x48d1914a1,0x54f499f6d,0x575a9c813,0x558355b2c,0x57b77610f,0x5c3436fe4,0x5c48fc77e,0x5e6eef402,0x5f233b6ff,0x5b742a632,0x650fa33ae,0x65d3175cc,0x6a9c245ae,0x69c5f3042,0x69d2484ea,0x7479e2de6,0x72cf23eab,0x77b1dc414,0x7e0c07217,0x7a6970647,0x78b2d8707,0x79c585794,0x866f59fc6,0x82f6727f5,0x854e2f414,0x9a1185934,0x9c7160c97,0x9dd194fd8,0xa21e12e38,0xae701c82c,0xad01219c1,0xb0351f9ee,0xb64ad80d4,0xb537314b4,0xbeaac7e3b,0xbb683dbcf,0xc672f72c1,0xc1e74dbab,0xcb55ee59d,0xcba053724,0xd0090fcf1,0xd06c3ad54,0xd3f120574,0xe6e33b1a7,0xe3533ea4a,0xe8068eb14,0xec07c0597,0xeaf3803da,0xf63b27d88,0xf30798379,0xfe4bba9b9,0xaba57d86b,0xc0d1625ab,0x13ce7bae7,0x4e81fd617,0x56e076320,0x6a708a540,0x72a898a18,0x815d42f80,0xcf4cc3d5f,0xd6bb65864,0xecd313a31,0xf521f5207,0xf91fa5df7,0x24f47a7,0x84d882,0x43cc2f29,0x47b50211,0x67ae4c1d,0xaa968a3,0x4d138e94,0x510a80da,0x140b0007,0x19d9cee1,0x81057e3b,0x86b97b66,0xee8b860a,0xb6c76b9b,0xfdcb98cb,0xfcacf3a0,0x14249fd98,0x1407201fd,0x150910d57,0x135cd7307,0x11479abb6,0x1cb9a9238,0x1cdd07766,0x1f2e7c24b,0x196642477,0x1957d4c84,0x1fa8f4f04,0x1b8246ed8,0x1baee10fe,0x22a4b63ca,0x22bf9012f,0x232c15b40,0x255aa966c,0x27a5afa97,0x25f40e425,0x286655cde,0x2c427e0e0,0x2ab97cbd0,0x2946e1d23,0x2da628410,0x2bfb209a6,0x368cd66bc,0x3487777c7,0x34ddeb840,0x3791f76f1,0x3a228e175,0x3e13bd408,0x3c9843ca2,0x39589d179,0x3974daeeb,0x3f6dbc731,0x3d6bc050c,0x39ab27497,0x46024e25e,0x4682ba0bc,0x42e9cd5ae,0x44c9b7b3f,0x40c7d41e9,0x46d2b4cce,0x43195356b,0x4122e6dd9,0x4753a59ab,0x4e1ef1e08,0x4e4ac0960,0x4e5faa06f,0x4a8d32943,0x491594b39,0x4d4ddb621,0x4ba761e81,0x49d483d8e,0x56290ef6c,0x537ed5ffc,0x55f5a7afa,0x55d5ea64f,0x581bab1da,0x5ebe926dd,0x5f10f99b5,0x5d1edfa5c,0x5f718df02,0x5de11e468,0x6033bb247,0x64581afe1,0x63c8dda76,0x61da3d8fd,0x6e3a22afa,0x6e6105b71,0x6a89a9e8c,0x6a97224f5,0x6b12c3801,0x6b684b22a,0x6f94c1579,0x6da6fea0d,0x6feaca457,0x703d38a60]
+};
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js';
+import {unzipSync} from 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js';
+
+/* ============================================================================
+   TEIL 1: Kamera, Schwerkraft-Sensor, ArUco-Erkennung, Pose-Schätzung
+   ============================================================================ */
+
+const video = document.getElementById('camVideo');
+const captureCanvas = document.getElementById('captureCanvas');
+const shutterBtn = document.getElementById('shutter');
+const captureStatus = document.getElementById('captureStatus');
+const gravityReadout = document.getElementById('gravityReadout');
+const calibToggle = document.getElementById('calibToggle');
+const calibBox = document.getElementById('calibBox');
+const analyzeOverlay = document.getElementById('analyzeOverlay');
+const analyzeText = document.getElementById('analyzeText');
+const resultBox = document.getElementById('resultBox');
+const captureScreen = document.getElementById('captureScreen');
+
+calibToggle.onclick = () => calibBox.classList.toggle('open');
+
+// --- Kamera starten -----------------------------------------------------
+let camStream = null;
+async function startCamera(){
+  try{
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    video.srcObject = camStream;
+    await video.play();
+    video.addEventListener('loadedmetadata', () => {
+      // Grobe Standard-Kalibrierung aus der Bildbreite (siehe Kommentar unten bei estimateK).
+      const K = estimateK(video.videoWidth, video.videoHeight);
+      document.getElementById('calFx').value = K.fx.toFixed(0);
+      document.getElementById('calFy').value = K.fy.toFixed(0);
+      document.getElementById('calCx').value = K.cx.toFixed(1);
+      document.getElementById('calCy').value = K.cy.toFixed(1);
+    }, {once:true});
+  }catch(err){
+    captureStatus.innerHTML = `<span class="errText">Kamera nicht verfügbar: ${err.message}.<br>Benötigt HTTPS oder localhost und Kamera-Berechtigung.</span>`;
+    shutterBtn.disabled = true;
+  }
+}
+startCamera();
+
+// Grobe Schätzung der Kamera-Matrix K ohne echte Kalibrierung: fx≈fy≈Bildbreite ist eine
+// verbreitete Faustregel für Smartphone-Rückkameras (~55-65° horizontales Sichtfeld).
+// Für genaue Ergebnisse: echte Kalibrierung über eine der drei Optionen im Kalibrierungs-Feld.
+function estimateK(w,h){
+  return { fx:w, fy:w, cx:w/2, cy:h/2 };
+}
+
+/* ============================================================================
+   Kamera-Kalibrierung: .npz-Datei ODER eigenes Kalibrierblatt (Grid aus denselben
+   ArUco-Markern, die die App bereits erkennt) ODER manuelle Eingabe.
+   ============================================================================ */
+
+let calibDist = [0,0,0,0,0]; // aktuell aktive Verzeichnungskoeffizienten (nur aus .npz)
+
+function setCalibFields(fx,fy,cx,cy){
+  document.getElementById('calFx').value = fx.toFixed(1);
+  document.getElementById('calFy').value = fy.toFixed(1);
+  document.getElementById('calCx').value = cx.toFixed(1);
+  document.getElementById('calCy').value = cy.toFixed(1);
+}
+function showCalibSummary(text, ok=true){
+  const el = document.getElementById('calibSummary');
+  el.textContent = text;
+  el.style.color = ok ? '#7be0b0' : '#ff8a8a';
+}
+
+// --- Tabs -------------------------------------------------------------------
+const calibTabs = {npz:'calibTabNpz', charuco:'calibTabCharuco', manual:'calibTabManual'};
+const calibPanes = {npz:'calibPaneNpz', charuco:'calibPaneCharuco', manual:'calibPaneManual'};
+Object.keys(calibTabs).forEach(key=>{
+  document.getElementById(calibTabs[key]).onclick = () => {
+    Object.keys(calibTabs).forEach(k=>{
+      document.getElementById(calibTabs[k]).classList.toggle('active', k===key);
+      document.getElementById(calibPanes[k]).style.display = k===key ? '' : 'none';
+    });
+  };
+});
+// Manuelle Eingabe passt zu keiner Verzeichnung mehr, die aus einer .npz stammte.
+['calFx','calFy','calCx','calCy'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', () => {
+    calibDist = [0,0,0,0,0];
+    showCalibSummary('Manuelle Werte aktiv (keine Verzeichnungskorrektur).');
+  });
+});
+
+// --- Option A: .npz-Datei ----------------------------------------------------
+// .npz ist ein ZIP-Archiv mit .npy-Dateien darin (hier: "K.npy", "dist.npy" - exakt die
+// Namen, unter denen das Python-Skript sie per calib["K"]/calib["dist"] anspricht).
+function parseNpy(buffer){
+  const view = new DataView(buffer);
+  const magic = String.fromCharCode(...new Uint8Array(buffer,0,6));
+  if(magic !== '\x93NUMPY') throw new Error('keine gültige .npy-Datei');
+  const major = view.getUint8(6);
+  let headerLen, headerStart;
+  if(major===1){ headerLen=view.getUint16(8,true); headerStart=10; }
+  else { headerLen=view.getUint32(8,true); headerStart=12; }
+  const headerStr = new TextDecoder('ascii').decode(new Uint8Array(buffer,headerStart,headerLen));
+  const descrMatch = headerStr.match(/'descr':\s*'([^']+)'/);
+  const shapeMatch = headerStr.match(/'shape':\s*\(([^)]*)\)/);
+  if(!descrMatch || !shapeMatch) throw new Error('.npy-Header nicht lesbar');
+  const descr = descrMatch[1];
+  const shape = shapeMatch[1].split(',').map(s=>s.trim()).filter(Boolean).map(Number);
+  const dataStart = headerStart+headerLen;
+  const littleEndian = descr[0] !== '>';
+  const type = descr.slice(1);
+  const n = shape.length ? shape.reduce((a,b)=>a*b,1) : 1;
+  let bytesPerEl, getter;
+  if(type==='f8'){bytesPerEl=8; getter=o=>view.getFloat64(o,littleEndian);}
+  else if(type==='f4'){bytesPerEl=4; getter=o=>view.getFloat32(o,littleEndian);}
+  else if(type==='i8'){bytesPerEl=8; getter=o=>Number(view.getBigInt64(o,littleEndian));}
+  else if(type==='i4'){bytesPerEl=4; getter=o=>view.getInt32(o,littleEndian);}
+  else throw new Error('nicht unterstützter numpy-dtype: '+descr);
+  const data = new Float64Array(n);
+  for(let i=0;i<n;i++) data[i]=getter(dataStart+i*bytesPerEl);
+  return {shape,data};
+}
+document.getElementById('npzFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById('npzStatus');
+  if(!file) return;
+  try{
+    const buf = await file.arrayBuffer();
+    const zip = unzipSync(new Uint8Array(buf));
+    const kEntry = Object.keys(zip).find(n=>/(^|\/)K\.npy$/i.test(n));
+    const distEntry = Object.keys(zip).find(n=>/(^|\/)dist\.npy$/i.test(n));
+    if(!kEntry) throw new Error(`kein "K.npy" im Archiv gefunden (enthalten: ${Object.keys(zip).join(', ')})`);
+    const kArr = zip[kEntry];
+    const kParsed = parseNpy(kArr.buffer.slice(kArr.byteOffset, kArr.byteOffset+kArr.byteLength));
+    if(kParsed.data.length < 9) throw new Error('K hat nicht die erwarteten 3×3=9 Werte');
+    const [fx,,cx,,fy,cy] = kParsed.data; // Zeilen-major 3x3: [fx,0,cx, 0,fy,cy, 0,0,1]
+    setCalibFields(fx,fy,cx,cy);
+    if(distEntry){
+      const dArr = zip[distEntry];
+      const dParsed = parseNpy(dArr.buffer.slice(dArr.byteOffset, dArr.byteOffset+dArr.byteLength));
+      calibDist = Array.from(dParsed.data.slice(0,5));
+      while(calibDist.length<5) calibDist.push(0);
+    } else {
+      calibDist = [0,0,0,0,0];
+    }
+    statusEl.innerHTML = `<span style="color:#7be0b0">✓ geladen: fx=${fx.toFixed(1)} fy=${fy.toFixed(1)} cx=${cx.toFixed(1)} cy=${cy.toFixed(1)}${distEntry?' · Verzeichnung inklusive':' · keine Verzeichnung in der Datei gefunden'}</span>`;
+    showCalibSummary('Aktive Kalibrierung: .npz-Datei' + (distEntry?' (inkl. Verzeichnungskorrektur)':''));
+  }catch(err){
+    statusEl.innerHTML = `<span class="errText">Fehler: ${err.message}</span>`;
+  }
+};
+
+// --- Option B: eigenes Kalibrierblatt (Grid aus DICT_6X6_250-Markern) --------
+const CHARUCO_COLS=4, CHARUCO_ROWS=3, CHARUCO_COUNT=CHARUCO_COLS*CHARUCO_ROWS; // IDs 0..11
+function codeToBits36(codeVal){
+  const bits=new Array(36); let r=codeVal;
+  for(let i=35;i>=0;i--){ bits[i]=r%2; r=Math.floor(r/2); }
+  return bits;
+}
+function drawArucoMarkerCell(ctx,x,y,size,id){
+  const code = AR.DICTIONARIES.DICT_6X6_250.codeList[id];
+  const bits = codeToBits36(code);
+  const cell = size/8;
+  ctx.fillStyle='#000'; ctx.fillRect(x,y,size,size);
+  ctx.fillStyle='#fff';
+  for(let r=0;r<6;r++) for(let c=0;c<6;c++){
+    if(bits[r*6+c]===1) ctx.fillRect(x+(c+1)*cell, y+(r+1)*cell, cell, cell);
+  }
+}
+document.getElementById('charucoGenerate').onclick = () => {
+  const squareMm = parseFloat(document.getElementById('charucoSquare').value) || 30;
+  const pxPerMm = 6; // reine Bildschirmauflösung des PNGs, keine Druck-DPI-Annahme -
+  const marginMm = squareMm*0.6, spacingMm = squareMm*1.6;
+  const sizePx = squareMm*pxPerMm;
+  const spacingPx = spacingMm*pxPerMm, marginPx = marginMm*pxPerMm;
+  const canvas = document.getElementById('charucoCanvas');
+  canvas.width = Math.round(marginPx*2 + (CHARUCO_COLS-1)*spacingPx + sizePx);
+  canvas.height = Math.round(marginPx*2 + (CHARUCO_ROWS-1)*spacingPx + sizePx + 60);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(let row=0; row<CHARUCO_ROWS; row++) for(let col=0; col<CHARUCO_COLS; col++){
+    const id = row*CHARUCO_COLS+col;
+    const x = marginPx + col*spacingPx, y = marginPx + row*spacingPx;
+    drawArucoMarkerCell(ctx, x, y, sizePx, id);
+  }
+  ctx.fillStyle='#000'; ctx.font='16px sans-serif';
+  ctx.fillText(`Kalibrierblatt · Markergröße ${squareMm}mm · in Originalgröße (100%) drucken, dann NACHMESSEN`, marginPx, canvas.height-25);
+  const a = document.createElement('a');
+  a.download = 'kalibrierblatt.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+  document.getElementById('charucoStatus').innerHTML = '<span style="color:#7be0b0">✓ heruntergeladen. In Originalgröße (100%, nicht "an Seite anpassen") drucken, danach eine Markerkante mit dem Lineal nachmessen und den tatsächlichen Wert oben eintragen.</span>';
+};
+
+// Least-Squares-Homographie über beliebig viele Punktkorrespondenzen (Normalgleichungen
+// ATA·x=ATb, 8 Unbekannte, h33=1 fixiert) - robuster als die exakte 4-Punkt-Lösung, weil
+// sich Eckenrausch über viele Marker mittelt statt auf 4 Punkte konzentriert zu sein.
+function fitHomographyLS(objPts, imgPts){
+  const ATA = Array.from({length:8},()=>new Array(8).fill(0));
+  const ATb = new Array(8).fill(0);
+  for(let i=0;i<objPts.length;i++){
+    const [X,Y]=objPts[i], [u,v]=imgPts[i];
+    [[[X,Y,1,0,0,0,-X*u,-Y*u],u], [[0,0,0,X,Y,1,-X*v,-Y*v],v]].forEach(([row,rhs])=>{
+      for(let a=0;a<8;a++){ for(let b=0;b<8;b++) ATA[a][b]+=row[a]*row[b]; ATb[a]+=row[a]*rhs; }
+    });
+  }
+  const h = gaussSolve(ATA, ATb);
+  return h ? [[h[0],h[1],h[2]],[h[3],h[4],h[5]],[h[6],h[7],1]] : null;
+}
+// Fokallänge aus zwei orthogonalen Fluchtpunkten (Caprile & Torre 1990): für zueinander
+// senkrechte Weltrichtungen gilt (vp1-Hauptpunkt)·(vp2-Hauptpunkt) = -f² (Skew=0,
+// quadratische Pixel, fx=fy=f vorausgesetzt). Hauptpunkt wird als Bildmitte angenommen.
+function estimateFocalFromGrid(objPts, imgPts, cx, cy){
+  const H = fitHomographyLS(objPts, imgPts);
+  if(!H) return null;
+  const h1=[H[0][0],H[1][0],H[2][0]], h2=[H[0][1],H[1][1],H[2][1]];
+  if(Math.abs(h1[2])<1e-9 || Math.abs(h2[2])<1e-9) return null; // Fluchtpunkt im Unendlichen
+  const vp1={x:h1[0]/h1[2],y:h1[1]/h1[2]}, vp2={x:h2[0]/h2[2],y:h2[1]/h2[2]};
+  const dotv = (vp1.x-cx)*(vp2.x-cx) + (vp1.y-cy)*(vp2.y-cy);
+  return dotv<0 ? Math.sqrt(-dotv) : null;
+}
+document.getElementById('charucoShot').onclick = async () => {
+  const statusEl = document.getElementById('charucoStatus');
+  if(!video.videoWidth){ statusEl.innerHTML='<span class="errText">Kamera nicht bereit.</span>'; return; }
+  statusEl.textContent = 'Analysiere …';
+  await new Promise(r=>setTimeout(r,30));
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video,0,0,c.width,c.height);
+  let found;
+  try{ found = runDetection(c); }
+  catch(err){ statusEl.innerHTML = `<span class="errText">Fehler: ${err.message}</span>`; return; }
+  const onBoard = found.filter(m=>m.id>=0 && m.id<CHARUCO_COUNT);
+  if(onBoard.length < 4){
+    statusEl.innerHTML = `<span class="errText">Nur ${onBoard.length} Markerfelder erkannt (mind. 4 nötig). Blatt flach, gut beleuchtet und möglichst frontal fotografieren.</span>`;
+    return;
+  }
+  const squareMm = parseFloat(document.getElementById('charucoSquare').value) || 30;
+  const squareM = squareMm/1000, spacing = squareM*1.6, hh = squareM/2;
+  const objPts=[], imgPts=[];
+  onBoard.forEach(m=>{
+    const col = m.id % CHARUCO_COLS, row = Math.floor(m.id/CHARUCO_COLS);
+    const wx = col*spacing, wy = -row*spacing;
+    const world = [[wx-hh,wy+hh],[wx+hh,wy+hh],[wx+hh,wy-hh],[wx-hh,wy-hh]];
+    world.forEach((w,i)=>{ objPts.push(w); imgPts.push([m.corners[i].x, m.corners[i].y]); });
+  });
+  const cx = c.width/2, cy = c.height/2;
+  const f = estimateFocalFromGrid(objPts, imgPts, cx, cy);
+  if(!f || !isFinite(f)){
+    statusEl.innerHTML = '<span class="errText">Konnte keine Brennweite bestimmen (Blatt zu frontal/planar im Bild - leicht schräger fotografieren und erneut versuchen).</span>';
+    return;
+  }
+  calibDist = [0,0,0,0,0];
+  setCalibFields(f,f,cx,cy);
+  statusEl.innerHTML = `<span style="color:#7be0b0">✓ ${onBoard.length} Markerfelder erkannt, f=${f.toFixed(1)}px geschätzt.</span>`;
+  showCalibSummary(`Aktive Kalibrierung: Kalibrierblatt (f=${f.toFixed(0)}px, keine Verzeichnung)`);
+};
+
+// --- Schwerkraft-Sensor ---------------------------------------------------
+// Liefert die "Unten"-Richtung im Kamera-Koordinatensystem (OpenCV-Konvention: X rechts,
+// Y runter, Z von der Kamera weg ins Bild), damit die 3D-Ansicht die reale horizontale
+// Ebene kennt statt sie nur aus der (nicht immer zutreffenden) Annahme "beide Marker
+// liegen exakt auf demselben Tisch" zu rekonstruieren.
+//
+// ANNAHME (Handy in normaler Fotohaltung, Rückkamera, Hochformat, oben=oben):
+//   Geräte-X (Bildschirm nach rechts)  ≈ Kamera-X (Bild nach rechts)
+//   Geräte-Y (Bildschirm nach oben)    ≈ -Kamera-Y (Kamera-Y zeigt nach unten)
+//   Geräte-Z (aus dem Screen heraus)   ≈ -Kamera-Z (Kamera blickt in die Szene)
+// accelerationIncludingGravity zeigt bei ruhendem Gerät ungefähr nach OBEN (Gegenkraft
+// zur Erdanziehung) - "unten" ist daher die negierte, normierte Richtung.
+// Falls diese Zuordnung auf einem konkreten Gerät nicht passt (z.B. Querformat, andere
+// Sensor-Konvention des Browsers): einfach die Vorzeichen in dieser einen Funktion tauschen.
+let lastAccel = null;
+function deviceAccelToCameraFrame(a){
+  return { x:a.x, y:-a.y, z:-a.z };
+}
+function currentGravityDown(){
+  if(!lastAccel) return null;
+  const c = deviceAccelToCameraFrame(lastAccel);
+  const len = Math.hypot(c.x,c.y,c.z);
+  if(len < 1e-6) return null;
+  return { x:-c.x/len, y:-c.y/len, z:-c.z/len };
+}
+let motionListenerAdded = false;
+function attachMotionListener(){
+  if(motionListenerAdded) return;
+  motionListenerAdded = true;
+  window.addEventListener('devicemotion', e=>{
+    if(e.accelerationIncludingGravity && e.accelerationIncludingGravity.x!=null){
+      lastAccel = e.accelerationIncludingGravity;
+      const d = currentGravityDown();
+      if(d) gravityReadout.textContent = `Schwerkraft ok · unten ≈ (${d.x.toFixed(2)}, ${d.y.toFixed(2)}, ${d.z.toFixed(2)})`;
+    }
+  });
+  gravityReadout.textContent = 'Schwerkraft-Sensor: warte auf Bewegungsdaten – Handy kurz ruhig halten …';
+  // Kommt nach ein paar Sekunden immer noch kein einziger Wert an (Desktop-Browser ohne
+  // Sensor, Berechtigung im Hintergrund verweigert, kein HTTPS o.ä.), ehrlich anzeigen
+  // statt dauerhaft "warte..." stehen zu lassen - inkl. Retry-Knopf.
+  setTimeout(()=>{
+    if(!lastAccel){
+      gravityReadout.innerHTML = 'Schwerkraft-Sensor: keine Daten empfangen <button id="retryMotion" style="margin-left:6px;padding:3px 8px;font-size:11px;border-radius:6px">erneut versuchen</button>';
+      const btn=document.getElementById('retryMotion');
+      if(btn) btn.onclick=()=>{ motionListenerAdded=false; requestMotion(); };
+    }
+  }, 3000);
+}
+async function requestMotion(){
+  if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
+    try{
+      const res = await DeviceMotionEvent.requestPermission();
+      if(res !== 'granted'){
+        gravityReadout.textContent = 'Schwerkraft-Sensor: Zugriff verweigert (iOS-Einstellungen → Safari → Bewegung & Ausrichtung erlauben, dann Seite neu laden)';
+        return;
+      }
+    }catch(e){
+      gravityReadout.innerHTML = `Schwerkraft-Sensor: Anfrage fehlgeschlagen <button id="retryMotion2" style="margin-left:6px;padding:3px 8px;font-size:11px;border-radius:6px">erneut versuchen</button>`;
+      const btn=document.getElementById('retryMotion2');
+      if(btn) btn.onclick=requestMotion;
+      return;
+    }
+  }
+  attachMotionListener();
+}
+// Auf iOS braucht requestPermission() zwingend eine ECHTE Nutzer-Geste im selben
+// Ereignis - ein sofortiger Aufruf beim Laden der Seite (ohne Geste) schlägt dort
+// garantiert fehl und hätte fälschlich "nicht verfügbar" angezeigt, bevor man überhaupt
+// die Chance hatte anzutippen. Deshalb: auf Browsern mit dieser API erst auf den ersten
+// Tap warten; auf Android/Desktop (keine solche API) sofort versuchen.
+if(typeof DeviceMotionEvent === 'undefined' || typeof DeviceMotionEvent.requestPermission !== 'function'){
+  requestMotion();
+} else {
+  gravityReadout.textContent = 'Schwerkraft-Sensor: Bildschirm antippen zum Aktivieren';
+  captureScreen.addEventListener('pointerdown', requestMotion, {once:true});
+}
+
+// --- ArUco-Erkennung + Pose je Marker -------------------------------------
+// Liefert für 4 Ecken (im Bild, Pixel, im Uhrzeigersinn beginnend oben-links - exakt die
+// Konvention, die sowohl OpenCV als auch js-aruco2 verwenden) Position + Rotationsmatrix
+// des Markers im Kamerakoordinatensystem. Methode: Homographie aus den 4 Punktkorrespon-
+// denzen (DLT) + Zerlegung über die Kamera-Matrix K (Standardverfahren für planare Pose,
+// vergleichbar mit cv2.solvePnP(..., IPPE_SQUARE) für nahezu frontale Ansichten - bei
+// sehr schrägen Aufnahmewinkeln etwas ungenauer als IPPE, für diesen Zweck ausreichend).
+function solveHomography(objPts, imgPts){
+  // objPts: [[X,Y],...]x4 (Markerebene, Z=0) -> imgPts: [[u,v],...]x4 (Pixel)
+  const A=[], b=[];
+  for(let i=0;i<4;i++){
+    const [X,Y]=objPts[i], [u,v]=imgPts[i];
+    A.push([X,Y,1,0,0,0,-X*u,-Y*u]); b.push(u);
+    A.push([0,0,0,X,Y,1,-X*v,-Y*v]); b.push(v);
+  }
+  const h = gaussSolve(A,b);
+  if(!h) return null;
+  return [[h[0],h[1],h[2]],[h[3],h[4],h[5]],[h[6],h[7],1]];
+}
+// Generischer n×n-Gleichungslöser (Gauß-Elimination mit Spaltenpivot). Für unsere 4-Punkt-
+// Homographie ist das System exakt bestimmt (8 Gleichungen, 8 Unbekannte).
+function gaussSolve(A,b){
+  const n=A.length, M=A.map((row,i)=>[...row,b[i]]);
+  for(let col=0;col<n;col++){
+    let piv=col;
+    for(let r=col+1;r<n;r++) if(Math.abs(M[r][col])>Math.abs(M[piv][col])) piv=r;
+    if(Math.abs(M[piv][col])<1e-10) return null;
+    [M[col],M[piv]]=[M[piv],M[col]];
+    for(let r=0;r<n;r++){
+      if(r===col) continue;
+      const f=M[r][col]/M[col][col];
+      for(let c=col;c<=n;c++) M[r][c]-=f*M[col][c];
+    }
+  }
+  return M.map((row,i)=>row[n]/row[i]);
+}
+function matVec3(M,v){
+  return [M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2], M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2], M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2]];
+}
+function norm3(v){return Math.hypot(v[0],v[1],v[2])}
+function sub3(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]]}
+function scl3(a,s){return [a[0]*s,a[1]*s,a[2]*s]}
+function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]}
+function cross3(a,b){return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]}
+function normalize3(a){const n=norm3(a)||1;return scl3(a,1/n)}
+
+// Iterative Entzerrung eines Bildpunkts nach dem Standard-Brown-Conrady-Modell (identisch
+// zu OpenCVs internem Vorgehen in undistortPoints): löst iterativ nach der unverzeichneten
+// Position auf, da das Verzeichnungsmodell selbst nur in der Richtung unverzeichnet->
+// verzeichnet eine geschlossene Formel hat.
+function undistortPoint(u,v,K,dist){
+  const [k1=0,k2=0,p1=0,p2=0,k3=0] = dist||[];
+  if(!k1 && !k2 && !p1 && !p2 && !k3) return {x:u,y:v};
+  let x=(u-K.cx)/K.fx, y=(v-K.cy)/K.fy;
+  const x0=x, y0=y;
+  for(let i=0;i<10;i++){
+    const r2=x*x+y*y;
+    const icdist=1/(1+k1*r2+k2*r2*r2+k3*r2*r2*r2);
+    const dx=2*p1*x*y+p2*(r2+2*x*x);
+    const dy=p1*(r2+2*y*y)+2*p2*x*y;
+    x=(x0-dx)*icdist;
+    y=(y0-dy)*icdist;
+  }
+  return {x:x*K.fx+K.cx, y:y*K.fy+K.cy};
+}
+
+// Symmetrische Orthogonalisierung zweier näherungsweise orthogonaler Einheitsvektoren:
+// mathematisch die Lösung mit der kleinsten GEMEINSAMEN Winkeländerung an beiden Vektoren
+// gleichzeitig (s=a+b und d=a-b sind für Einheitsvektoren immer exakt orthogonal, daraus
+// direkt ein sauberes Paar bilden). Im Unterschied zu Gram-Schmidt (das r1 unangetastet
+// lässt und den GESAMTEN Fehler auf r2 abwälzt) verteilt sich die Korrektur fair auf beide -
+// r1 und r2 kommen aus derselben Homographie-Zerlegung und verdienen gleiches Vertrauen.
+function symmetricOrthogonalize(a,b){
+  const s=normalize3(add3(a,b)), d=normalize3(sub3(a,b));
+  return [normalize3(add3(s,d)), normalize3(sub3(s,d))];
+}
+function add3(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]}
+
+function poseFromCorners(corners, markerLength, K, dist){
+  const h = markerLength/2;
+  // Reihenfolge deckungsgleich mit dem Python-Skript (solvePnP-Objektpunkte):
+  // TL=(-h,h) TR=(h,h) BR=(h,-h) BL=(-h,-h); corners[0..3] = TL,TR,BR,BL.
+  const objPts = [[-h,h],[h,h],[h,-h],[-h,-h]];
+  const imgPts = corners.map(c=>{ const u=undistortPoint(c.x,c.y,K,dist); return [u.x,u.y]; });
+  const H = solveHomography(objPts, imgPts);
+  if(!H) return null;
+  const KinvA = 1/K.fx, KinvE = 1/K.fy, KinvC = -K.cx/K.fx, KinvF = -K.cy/K.fy;
+  const Kinv = [[KinvA,0,KinvC],[0,KinvE,KinvF],[0,0,1]];
+  const h1=[H[0][0],H[1][0],H[2][0]], h2=[H[0][1],H[1][1],H[2][1]], h3=[H[0][2],H[1][2],H[2][2]];
+  const kh1=matVec3(Kinv,h1), kh2=matVec3(Kinv,h2), kh3=matVec3(Kinv,h3);
+  let lambda = 2/(norm3(kh1)+norm3(kh2));
+  let r1=scl3(kh1,lambda), r2=scl3(kh2,lambda), t=scl3(kh3,lambda);
+  if(t[2] < 0){ lambda=-lambda; r1=scl3(kh1,lambda); r2=scl3(kh2,lambda); t=scl3(kh3,lambda); }
+  [r1,r2] = symmetricOrthogonalize(normalize3(r1), normalize3(r2));
+  const r3 = cross3(r1,r2);
+  return {
+    position:{x:t[0],y:t[1],z:t[2]},
+    xAxis:{x:r1[0],y:r1[1],z:r1[2]},
+    yAxis:{x:r2[0],y:r2[1],z:r2[2]},
+    zAxis:{x:r3[0],y:r3[1],z:r3[2]}
+  };
+}
+
+// js-aruco2 ist ein deutlich simplerer Detektor als OpenCV: ein einziger fest verdrahteter
+// Adaptive-Threshold (Fenstergröße intern fix), keine Mehrskalen-Suche. Bei einem Foto in
+// voller Handy-Auflösung (z.B. 1920×1080) kann dieses feste Fenster für große, nahe Marker
+// ungünstig sitzen, während ein kleinerer/entfernterer Marker im selben Bild gut erkannt
+// wird (oder umgekehrt) - genau das erklärt "nur noch 1 Marker". Abhilfe: dieselbe Aufnahme
+// zusätzlich in 2 kleineren Auflösungen erneut versuchen und die gefundenen IDs zusammen-
+// führen. Das ist kein Ersatz für OpenCVs deutlich robusteren Detektor, aber ein sehr
+// wirksamer, günstiger Kompromiss ohne die Bibliothek selbst patchen zu müssen.
+function detectAtScale(canvas, scale){
+  let srcCanvas = canvas;
+  if(scale !== 1){
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(canvas.width*scale));
+    c.height = Math.max(1, Math.round(canvas.height*scale));
+    c.getContext('2d').drawImage(canvas, 0,0,c.width,c.height);
+    srcCanvas = c;
+  }
+  const ctx = srcCanvas.getContext('2d', {willReadFrequently:true});
+  const imageData = ctx.getImageData(0,0,srcCanvas.width,srcCanvas.height);
+  const detector = new AR.Detector({dictionaryName:'DICT_6X6_250'});
+  const found = detector.detect(imageData);
+  // Ecken zurück auf die Auflösung der Originalaufnahme skalieren, damit K (fx/fy/cx/cy,
+  // bezogen auf die Originalgröße) weiterhin passt.
+  if(scale !== 1){
+    found.forEach(m=>m.corners.forEach(c=>{ c.x/=scale; c.y/=scale; }));
+  }
+  return found;
+}
+function runDetection(canvas){
+  const uniqueById = new Map();
+  const scalesTried = [];
+  for(const scale of [1, 0.55, 0.35]){
+    let found;
+    try{ found = detectAtScale(canvas, scale); }
+    catch(err){ console.warn('[Erkennung] Fehler bei Skalierung',scale,err); continue; }
+    scalesTried.push(`${scale}: ${found.length} gefunden`);
+    found.forEach(m=>{ if(!uniqueById.has(m.id)) uniqueById.set(m.id, m); });
+    if(uniqueById.size >= 2) break;
+  }
+  console.log('[Erkennung] Versuche:', scalesTried.join(' · '));
+  return [...uniqueById.values()].sort((a,b)=>a.id-b.id);
+}
+
+// --- Ablauf: Auslösen -> Frame + Schwerkraft einfrieren -> auswerten ------
+shutterBtn.onclick = async () => {
+  if(!video.videoWidth){ captureStatus.textContent='Kamera noch nicht bereit …'; return; }
+  const gravityDown = currentGravityDown();
+  captureCanvas.width = video.videoWidth;
+  captureCanvas.height = video.videoHeight;
+  const ctx = captureCanvas.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(video,0,0,captureCanvas.width,captureCanvas.height);
+
+  analyzeOverlay.classList.add('show');
+  analyzeText.textContent = 'Marker werden gesucht …';
+  resultBox.style.display='none';
+  await new Promise(r=>setTimeout(r,30)); // UI erst rendern lassen, dann (blockierend) erkennen
+
+  let found;
+  try{ found = runDetection(captureCanvas); }
+  catch(err){ showAnalyzeError('Fehler bei der Bilderkennung: '+err.message); return; }
+
+  if(found.length < 2){
+    showAnalyzeError(`Nur ${found.length} Marker erkannt (mind. 2 nötig). Näher ran, mehr Licht, Marker möglichst frontal und beide etwa gleich groß im Bild - dann "Erneut versuchen". Details siehe Browser-Konsole.`);
+    return;
+  }
+
+  const K = {
+    fx: parseFloat(document.getElementById('calFx').value) || estimateK(captureCanvas.width,captureCanvas.height).fx,
+    fy: parseFloat(document.getElementById('calFy').value) || estimateK(captureCanvas.width,captureCanvas.height).fy,
+    cx: parseFloat(document.getElementById('calCx').value) || captureCanvas.width/2,
+    cy: parseFloat(document.getElementById('calCy').value) || captureCanvas.height/2
+  };
+  const markerLength = parseFloat(document.getElementById('calMarkerLen').value) || 0.0705;
+
+  const mA = found[0], mB = found[1];
+  const poseA = poseFromCorners(mA.corners, markerLength, K, calibDist);
+  const poseB = poseFromCorners(mB.corners, markerLength, K, calibDist);
+  if(!poseA || !poseB){
+    showAnalyzeError('Pose konnte nicht berechnet werden (Homographie singulär). Anderer Blickwinkel, dann erneut versuchen.');
+    return;
+  }
+
+  const markerData = {
+    coordinateSystem:{origin:'camera', unit:'meter'},
+    markerA:{id:mA.id, ...poseA},
+    markerB:{id:mB.id, ...poseB}
+  };
+  if(gravityDown) markerData.gravityDown = gravityDown;
+
+  const distMM = (Math.hypot(poseA.position.x-poseB.position.x, poseA.position.y-poseB.position.y, poseA.position.z-poseB.position.z)*1000).toFixed(1);
+  const hasDist = calibDist.some(v=>v!==0);
+  resultBox.style.display='block';
+  resultBox.innerHTML = `<b class="okText">✓ ${found.length} Marker erkannt</b>
+   Verwendet: Marker ${mA.id} &amp; ${mB.id}<br>
+   Abstand: ${distMM} mm<br>
+   Kalibrierung: fx=${K.fx.toFixed(0)} fy=${K.fy.toFixed(0)}${hasDist?' · inkl. Verzeichnungskorrektur':''}<br>
+   Schwerkraft-Referenz: ${gravityDown?'<span class="okText">vorhanden</span>':'<span class="errText">fehlt (Ebene wird aus Markern geschätzt)</span>'}
+   <div class="row" style="margin-top:12px;gap:8px">
+     <button id="goToScene" class="primary" style="flex:1">Weiter zur 3D-Ansicht</button>
+     <button id="retakePhoto" style="flex:1">Erneut aufnehmen</button>
+   </div>`;
+  analyzeText.textContent='';
+  analyzeOverlay.querySelector('.spinner').style.display='none';
+  document.getElementById('goToScene').onclick = () => {
+    camStream && camStream.getTracks().forEach(t=>t.stop());
+    captureScreen.style.display='none';
+    analyzeOverlay.classList.remove('show');
+    startApp(markerData);
+  };
+  document.getElementById('retakePhoto').onclick = () => {
+    analyzeOverlay.classList.remove('show');
+    analyzeOverlay.querySelector('.spinner').style.display='';
+  };
+};
+
+function showAnalyzeError(msg){
+  analyzeText.innerHTML = `<span class="errText">${msg}</span><div class="row" style="margin-top:14px"><button id="retakePhoto2" class="primary">Erneut versuchen</button></div>`;
+  document.getElementById('retakePhoto2').onclick = () => analyzeOverlay.classList.remove('show');
+}
+
+document.getElementById('demoLink').onclick = () => {
+  camStream && camStream.getTracks().forEach(t=>t.stop());
+  captureScreen.style.display='none';
+  startApp({
+    markerA:{id:'A',position:{x:0,y:0,z:0},xAxis:{x:1,y:0,z:0},yAxis:{x:0,y:1,z:0},zAxis:{x:0,y:0,z:1}},
+    markerB:{id:'B',position:{x:2,y:0,z:0},xAxis:{x:-1,y:0,z:0},yAxis:{x:0,y:1,z:0},zAxis:{x:0,y:0,z:-1}}
+  });
+};
+
+document.getElementById('newPhoto').onclick = () => location.reload();
+
+/* ============================================================================
+   TEIL 2: 3D-Ansicht (Three.js) – Szene, Marker, Rohr-Routing, Auto-Routing
+   Wird erst gestartet, sobald echte oder Demo-Markerdaten vorliegen.
+   ============================================================================ */
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0xd8dfe8);
+scene.add(new THREE.HemisphereLight(0xffffff,0x9aa8bc,2.4));
+const dl=new THREE.DirectionalLight(0xffffff,2.0); dl.position.set(4,7,5); scene.add(dl);
+const dl2=new THREE.DirectionalLight(0xffffff,0.6); dl2.position.set(-4,3,-5); scene.add(dl2);
+
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.01,100);
+camera.position.set(3,2.5,4);
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace; document.querySelector('#app').appendChild(renderer.domElement);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;
+
+const pipes=new THREE.Group(); scene.add(pipes);
+const joints=new THREE.Group(); scene.add(joints);
+const markersGroup=new THREE.Group(); scene.add(markersGroup);
+
+function cvToThree(v){ return new THREE.Vector3(v.x, -v.y, -v.z); }
+
+function readMarker(m){
+  const out = { id:m.id, position:cvToThree(m.position), xAxis:cvToThree(m.xAxis).normalize() };
+  if(m.yAxis) out.yAxis = cvToThree(m.yAxis).normalize();
+  if(m.zAxis) out.zAxis = cvToThree(m.zAxis).normalize();
+  return out;
+}
+
+function startApp(markerData){
+
+const markerA=readMarker(markerData.markerA);
+const markerB=readMarker(markerData.markerB);
+
+const markerDist = markerA.position.distanceTo(markerB.position) || 1;
+const UNIT = markerDist;
+
+const PIPE_R      = THREE.MathUtils.clamp(UNIT*0.045, 0.0018, 0.06);
+const SEG_LEN      = THREE.MathUtils.clamp(UNIT*0.55,  0.02,  1.0);
+const ENDPOINT_R   = THREE.MathUtils.clamp(UNIT*0.09,  0.0035, 0.09);
+const HANDLE_OFF   = THREE.MathUtils.clamp(UNIT*0.42,  0.015, 0.48);
+const HANDLE_R     = THREE.MathUtils.clamp(UNIT*0.06,  0.0022, 0.06);
+const HANDLE_LINE  = HANDLE_OFF*0.65;
+const MARKER_R     = THREE.MathUtils.clamp(UNIT*0.08,  0.006, 0.04);
+const MARKER_ARROW = THREE.MathUtils.clamp(UNIT*0.9,   0.06,  0.55);
+const STUB_LEN     = THREE.MathUtils.clamp(0.15, 0.02, markerDist*0.45);
+const MIN_SEG      = Math.max(PIPE_R*3, UNIT*0.01);
+
+const camOffsetDir = new THREE.Vector3(3,2.5,4).normalize();
+camera.position.copy(markerA.position).add(camOffsetDir.multiplyScalar(Math.max(markerDist*3, 0.6)));
+const midAB = new THREE.Vector3().addVectors(markerA.position, markerB.position).multiplyScalar(.5);
+controls.target.copy(midAB);
+controls.minDistance = markerDist*0.3;
+controls.maxDistance = markerDist*30;
+controls.update();
+
+// Horizontale Referenzebene: NUR aus dem echten Schwerkraftvektor, keine Ersatz-Ebene aus
+// Marker-Koplanarität mehr (die konnte je nach Anbau-Situation der Marker auch schräg oder
+// eher senkrecht ausfallen und wurde fälschlich als "die Horizontale" wahrgenommen). Zur
+// reinen Information landet die Marker-basierte Schätzung nur noch in der Konsole.
+let usedGravity = false, tableNormal = null;
+{
+  const abDir = new THREE.Vector3().subVectors(markerB.position, markerA.position).normalize();
+  const rawN1 = new THREE.Vector3().crossVectors(abDir, markerA.xAxis).normalize();
+  const rawN2 = new THREE.Vector3().crossVectors(abDir, markerB.xAxis).normalize();
+  let planeAngleDeg = THREE.MathUtils.radToDeg(rawN1.angleTo(rawN2));
+  if(planeAngleDeg>90) planeAngleDeg = 180-planeAngleDeg;
+  console.log('(Nur Info) Ebenen-Konsistenz A/B aus Markern allein:', planeAngleDeg.toFixed(2), '° Abweichung (0° = perfekt koplanar) - wird nicht mehr angezeigt.');
+}
+if(markerData.gravityDown){
+  tableNormal = cvToThree(markerData.gravityDown).normalize();
+  usedGravity = true;
+} else {
+  console.log('Keine horizontale Referenzebene angezeigt: kein Schwerkraftvektor vorhanden (Sensor bei der Aufnahme nicht verfügbar/erlaubt).');
+}
+
+function makeLabelSprite(text,color){
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  const fontPx=54;
+  ctx.font=`600 ${fontPx}px system-ui,-apple-system,sans-serif`;
+  const textW=ctx.measureText(text).width;
+  canvas.width=Math.ceil(textW)+56; canvas.height=fontPx*1.9;
+  ctx.font=`600 ${fontPx}px system-ui,-apple-system,sans-serif`;
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  ctx.beginPath();
+  ctx.roundRect(0,0,canvas.width,canvas.height,canvas.height*0.25);
+  ctx.fill();
+  ctx.fillStyle=color; ctx.textBaseline='middle';
+  ctx.fillText(text,28,canvas.height/2);
+  const tex=new THREE.CanvasTexture(canvas);
+  const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthTest:false,transparent:true}));
+  const h=UNIT*0.22, w=h*(canvas.width/canvas.height);
+  sprite.scale.set(w,h,1);
+  return sprite;
+}
+
+if(usedGravity){
+  // Darf ruhig 1m unterhalb der Marker liegen (dient nur als Referenz für "waagerecht",
+  // nicht als exakte reale Standfläche) - tableNormal zeigt bereits nach unten.
+  const planeCenter = midAB.clone().add(tableNormal.clone().multiplyScalar(1.0));
+  const planeSize = Math.max(markerDist*6, 0.3);
+  const gridQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), tableNormal);
+  const tableGrid = new THREE.GridHelper(planeSize,16,0xC98A2E,0xE7C892);
+  tableGrid.quaternion.copy(gridQuat);
+  tableGrid.position.copy(planeCenter);
+  scene.add(tableGrid);
+  const tablePlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(planeSize,planeSize),
+    new THREE.MeshBasicMaterial({color:0xF4D9A0,transparent:true,opacity:.22,side:THREE.DoubleSide})
+  );
+  tablePlane.quaternion.copy(gridQuat);
+  tablePlane.position.copy(planeCenter);
+  scene.add(tablePlane);
+  const label=makeLabelSprite('Horizontale (Schwerkraft)', '#8a5a12');
+  // Minimal in Richtung "oben" (-tableNormal) versetzt, damit das Label nicht exakt in
+  // der Gitterebene liegt (Z-Fighting) und leicht darüber schwebt statt dahinter zu liegen.
+  label.position.copy(planeCenter).addScaledVector(tableNormal, -planeSize*0.02);
+  scene.add(label);
+}
+
+let current=markerA.position.clone();
+let direction=markerA.xAxis.clone();
+
+let history=[], selectedMode='b90';
+
+document.getElementById('markerInfo').textContent =
+  `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm` +
+  (usedGravity ? ' · Horizontale aus Schwerkraft-Sensor' : ' · keine Horizontale (Sensor war bei der Aufnahme nicht verfügbar)');
+
+// Rein informativ: Winkel der jeweiligen Rohrachse (xAxis) zur Schwerkraft. Wird NICHT
+// automatisch zur Korrektur der Marker-Rotation verwendet - ein einzelner Marker hat
+// keine feste Beziehung zur Schwerkraft (das Rohr kann in jede Richtung zeigen), daher
+// wäre ein automatisches "Einrasten" ohne bekannte Anbau-Konvention riskant. Hilft aber
+// beim Plausibilisieren: exakt 0°/90° ist bei geraden HLK-Rohrläufen der Normalfall.
+if(usedGravity){
+  const angleTo = (axis)=>{
+    let a = THREE.MathUtils.radToDeg(axis.angleTo(tableNormal));
+    const fromHorizontal = Math.abs(90-a);
+    if(fromHorizontal < 2) return 'horizontal (±'+fromHorizontal.toFixed(1)+'°)';
+    if(a < 2 || a > 178) return 'vertikal (±'+Math.min(a,180-a).toFixed(1)+'°)';
+    return (90-fromHorizontal<45? (90-a).toFixed(0)+'° über der Horizontalen' : a.toFixed(0)+'° zur Vertikalen');
+  };
+  console.log('Rohrachse A relativ zur Schwerkraft:', angleTo(markerA.xAxis));
+  console.log('Rohrachse B relativ zur Schwerkraft:', angleTo(markerB.xAxis));
+}
+
+console.log('ArUco Marker A:', markerA);
+console.log('ArUco Marker B:', markerB);
+console.log('A → B Abstand:', markerDist.toFixed(3), 'm');
+
+let lastPipeMesh=null, lastPipeStart=null, lastPipeEnd=null;
+function pipeMat(active=false){return new THREE.MeshStandardMaterial({color:active?0x2468e8:0x51637c,metalness:.55,roughness:.3,emissive:active?0x0c2c63:0})}
+function cylinderBetween(a,b,r=PIPE_R,active=false){
+ const v=new THREE.Vector3().subVectors(b,a), len=v.length(), mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,20),pipeMat(active));
+ m.position.copy(mid); m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize()); pipes.add(m);
+ lastPipeMesh=m; lastPipeStart=a.clone(); lastPipeEnd=b.clone();
+ return m;
+}
+function fadingPipeStub(origin,dir,length,radius){
+ const group=new THREE.Group();
+ const segments=12, d=dir.clone().normalize(), stepLen=length/segments;
+ for(let i=0;i<segments;i++){
+  const a=origin.clone().add(d.clone().multiplyScalar(i*stepLen));
+  const b=origin.clone().add(d.clone().multiplyScalar((i+1)*stepLen));
+  const mid=new THREE.Vector3().addVectors(a,b).multiplyScalar(.5);
+  const opacity=Math.max(0,1-(i+0.5)/segments)*0.7;
+  const mat=new THREE.MeshStandardMaterial({color:0x8b98a8,metalness:.4,roughness:.5,transparent:true,opacity,depthWrite:false});
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(radius,radius,stepLen*1.05,12),mat);
+  m.position.copy(mid);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d);
+  group.add(m);
+ }
+ return group;
+}
+function elbow(pivot,fromDir,toDir,r=PIPE_R){
+ const br=r*3.0;
+ const p0=pivot.clone().sub(fromDir.clone().normalize().multiplyScalar(br));
+ const p1=pivot.clone().add(toDir.clone().normalize().multiplyScalar(br));
+ const curve=new THREE.QuadraticBezierCurve3(p0,pivot.clone(),p1);
+ const tube=new THREE.Mesh(new THREE.TubeGeometry(curve,18,r,12,false),pipeMat(false));
+ pipes.add(tube); return {p0,p1,br};
+}
+const CARDINALS=[new THREE.Vector3(1,0,0),new THREE.Vector3(-1,0,0),new THREE.Vector3(0,1,0),new THREE.Vector3(0,-1,0),new THREE.Vector3(0,0,1),new THREE.Vector3(0,0,-1)];
+function perpDirs(forward){
+ const ref=Math.abs(forward.y)>.9?new THREE.Vector3(1,0,0):new THREE.Vector3(0,1,0);
+ const u=new THREE.Vector3().crossVectors(ref,forward).normalize();
+ const v=new THREE.Vector3().crossVectors(forward,u).normalize();
+ return [u.clone(),u.clone().negate(),v.clone(),v.clone().negate()];
+}
+function handleDirs(){
+ const dirs=[direction.clone()];
+ if(history.length===0){
+   CARDINALS.forEach(v=>dirs.push(v.clone()));
+ } else if(selectedMode==='b90'){
+   dirs.push(...perpDirs(direction));
+ } else {
+   dirs.push(...perpDirs(direction).map(v=>direction.clone().add(v).normalize()));
+ }
+ const out=[];
+ dirs.forEach(d=>{ if(!out.some(o=>o.dot(d)>0.98)) out.push(d); });
+ return out;
+}
+function colorFor(v){
+ if(Math.abs(v.x)>.95) return 0xd23c3c;
+ if(Math.abs(v.y)>.95) return 0x1f9d52;
+ if(Math.abs(v.z)>.95) return 0x2468e8;
+ return 0xd98a1e;
+}
+function makeArrow(start, dir, length, color){
+  const group=new THREE.Group();
+  const lineGeom=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), dir.clone().multiplyScalar(length)]);
+  group.add(new THREE.Line(lineGeom, new THREE.LineBasicMaterial({color})));
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(Math.max(length*0.1,.008),Math.max(length*0.25,.02),12), new THREE.MeshBasicMaterial({color}));
+  cone.position.copy(dir.clone().multiplyScalar(length));
+  cone.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+  group.add(cone);
+  group.position.copy(start);
+  return group;
+}
+function createMarkerVisual(marker, isStart){
+  const g=new THREE.Group();
+  g.position.copy(marker.position);
+  const sphere=new THREE.Mesh(new THREE.SphereGeometry(MARKER_R,16,16), new THREE.MeshStandardMaterial({color:isStart?0x2468e8:0xd9821e}));
+  g.add(sphere);
+  g.add(makeArrow(new THREE.Vector3(0,0,0), marker.xAxis, MARKER_ARROW, 0xd23c3c));
+  if(marker.yAxis) g.add(makeArrow(new THREE.Vector3(0,0,0), marker.yAxis, MARKER_ARROW, 0x1f9d52));
+  else console.warn(`Marker ${marker.id}: yAxis fehlt – wird nicht gezeichnet.`);
+  if(marker.zAxis) g.add(makeArrow(new THREE.Vector3(0,0,0), marker.zAxis, MARKER_ARROW, 0x2468e8));
+  else console.warn(`Marker ${marker.id}: zAxis fehlt – wird nicht gezeichnet.`);
+  markersGroup.add(g);
+}
+createMarkerVisual(markerA,true);
+createMarkerVisual(markerB,false);
+markersGroup.add(fadingPipeStub(markerA.position, markerA.xAxis, STUB_LEN, PIPE_R*0.9));
+markersGroup.add(fadingPipeStub(markerB.position, markerB.xAxis, STUB_LEN, PIPE_R*0.9));
+
+const targetGuide=new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([markerA.position.clone(), markerB.position.clone()]),
+  new THREE.LineDashedMaterial({color:0x93a1b3,dashSize:UNIT*0.06,gapSize:UNIT*0.04})
+);
+targetGuide.computeLineDistances();
+scene.add(targetGuide);
+
+function endpointMarker(p,active=true){
+ joints.clear();
+ const g=new THREE.Group(); g.position.copy(p);
+ const s=new THREE.Mesh(new THREE.SphereGeometry(ENDPOINT_R,20,20),pipeMat(active));
+ g.add(s);
+ handleDirs().forEach(v=>{
+  const c=colorFor(v);
+  const o=new THREE.Group(); o.position.copy(v.clone().multiplyScalar(HANDLE_OFF));
+  const m=new THREE.Mesh(new THREE.OctahedronGeometry(HANDLE_R,0),new THREE.MeshBasicMaterial({color:c}));
+  m.userData.dir=v; m.userData.route=true; o.add(m);
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),v.clone().multiplyScalar(-HANDLE_LINE)]),new THREE.LineBasicMaterial({color:c}));
+  o.add(line); g.add(o);
+ });
+ joints.add(g);
+}
+endpointMarker(current);
+
+// Klassifiziert eine Richtungsänderung rein geometrisch (Skalarprodukt alte/neue Richtung)
+// statt sich auf den global gewählten UI-Modus zu verlassen - so wird sowohl beim manuellen
+// Tippen als auch beim Auto-Routing (das ggf. andere Winkel als "selectedMode" braucht)
+// immer der tatsächliche Biegewinkel gezeichnet.
+function classifyTurn(oldDir,newDir){
+  const d=oldDir.dot(newDir);
+  if(d>0.999) return 'straight';
+  if(d>0.5) return 'b45';
+  return 'b90';
+}
+
+function addSegment(dir,mode,len){
+ if(len===undefined) len=SEG_LEN;
+ if(mode===undefined) mode = history.length>0 ? classifyTurn(direction,dir) : 'straight';
+ const end=current.clone().add(dir.clone().normalize().multiplyScalar(len));
+ history.push({dir:dir.clone(),mode,len});
+ if(mode==='straight'){
+   cylinderBetween(current,end,PIPE_R);
+ } else {
+   if(lastPipeMesh){
+     pipes.remove(lastPipeMesh);
+     const trimmedEnd=current.clone().sub(direction.clone().normalize().multiplyScalar(PIPE_R*3));
+     cylinderBetween(lastPipeStart,trimmedEnd,PIPE_R);
+   }
+   const e=elbow(current,direction,dir,PIPE_R);
+   cylinderBetween(e.p1,end,PIPE_R);
+ }
+ current.copy(end); direction.copy(dir).normalize(); endpointMarker(current);
+}
+function undo(){
+  if(!history.length)return;
+  pipes.clear();
+  lastPipeMesh=null;
+  const h=history.slice(0,-1);
+  history=[];
+  current.copy(markerA.position);
+  direction.copy(markerA.xAxis).normalize();
+  h.forEach(x=>addSegment(x.dir,x.mode,x.len));
+  endpointMarker(current);
+}
+function reset(){
+  pipes.clear();
+  lastPipeMesh=null;
+  history=[];
+  current.copy(markerA.position);
+  direction.copy(markerA.xAxis).normalize();
+  endpointMarker(current);
+}
+
+// --- Auto-Routing ----------------------------------------------------------
+// Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Bögen.
+// Startrichtung an A = markerA.xAxis (wie beim manuellen Routing). Ankunftsrichtung an B
+// = -markerB.xAxis: an B zeigt +X in Richtung des vorhandenen Rohrs dahinter (siehe
+// Andeutung oben), die neue Route muss also aus der Gegenrichtung ankommen, um sauber
+// in einer Linie in das vorhandene Rohr überzugehen.
+// Ergebnis ist nur ein pragmatischer, gültiger Vorschlag (kürzeste Lösung mit maximal
+// zwei Zwischen-Bögen) - kein optimaler/kürzester Pfad im umfassenden Sinn, und bewusst
+// jederzeit über die normalen Routing-Werkzeuge weiter anpassbar.
+// Kandidaten-Zwischenrichtungen relativ zu einer Vorwärtsrichtung "fwd": die 4 90°-Richtungen
+// plus die 4 daraus abgeleiteten 45°-Richtungen (gleicher Satz, den auch die manuellen
+// Routing-Griffe anbieten).
+function turnCandidates(fwd){
+  const p=perpDirs(fwd);
+  return [...p, ...p.map(v=>fwd.clone().add(v).normalize())];
+}
+// Löst L1*c0 + L2*c1 + L3*c2 = delta exakt (3 Gleichungen, 3 Unbekannte). null, wenn
+// singulär oder eine Länge unter MIN_SEG/negativ wäre.
+function solve3(c0,c1,c2,delta){
+  const M=new THREE.Matrix3().set(c0.x,c1.x,c2.x, c0.y,c1.y,c2.y, c0.z,c1.z,c2.z);
+  if(Math.abs(M.determinant())<1e-9) return null;
+  const L=delta.clone().applyMatrix3(M.clone().invert());
+  if(L.x>=MIN_SEG && L.y>=MIN_SEG && L.z>=MIN_SEG) return [L.x,L.y,L.z];
+  return null;
+}
+
+// Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Bögen.
+// Startrichtung an A = markerA.xAxis (wie beim manuellen Routing). Ankunftsrichtung an B
+// = -markerB.xAxis: an B zeigt +X in Richtung des vorhandenen Rohrs dahinter (siehe
+// Andeutung oben), die neue Route muss also aus der Gegenrichtung ankommen, um sauber
+// in einer Linie in das vorhandene Rohr überzugehen.
+//
+// WICHTIG: Sobald DA und DB (anti-)parallel sind - und genau das ist der mit Abstand
+// häufigste Realfall (gerade Verlängerung ODER seitlicher Versatz zwischen zwei etwa
+// gleich ausgerichteten Rohrenden) - sind DA und DB als Vektoren linear ABHÄNGIG. Jedes
+// 3x3-Gleichungssystem der Form [DA | irgendeine Zwischenrichtung | DB] ist dann IMMER
+// singulär (Rang höchstens 2), unabhängig von der gewählten Zwischenrichtung. Das war der
+// eigentliche Grund, warum Auto-Route bisher praktisch nie eine Lösung gefunden hat. Für
+// diesen Fall gibt es daher einen eigenen "Versatz"-Zweig (zwei gleich große Bögen mit
+// geradem Zwischenstück - die klassische Versatz-Lösung).
+function tryAutoRoute(){
+  const A=markerA.position, DA=markerA.xAxis.clone().normalize();
+  const B=markerB.position, DB=markerB.xAxis.clone().normalize().negate();
+  const delta=new THREE.Vector3().subVectors(B,A);
+  const log=(...a)=>console.log('[AutoRoute]',...a);
+  if(delta.length()<1e-6){ log('A und B liegen am selben Punkt.'); return null; }
+  const deltaDir=delta.clone().normalize();
+  log('DA=',DA.toArray().map(n=>n.toFixed(3)),'DB=',DB.toArray().map(n=>n.toFixed(3)),'delta=',delta.toArray().map(n=>n.toFixed(3)),'DA·DB=',DA.dot(DB).toFixed(3));
+
+  // 1 Segment: direkte gerade Verbindung.
+  if(deltaDir.dot(DA)>0.999 && deltaDir.dot(DB)>0.999){
+    log('Lösung: 1 gerades Segment.');
+    return [{dir:DA.clone(), len:delta.length()}];
+  }
+
+  const collinear = Math.abs(DA.dot(DB)) > 0.97;
+
+  if(collinear){
+    // Versatz-Fall: Anteil von delta entlang DA ("Vorlauf") und senkrecht dazu ("seitlicher
+    // Versatz") trennen. Zwei gleich große 45°-Bögen mit einem geraden Zwischenstück
+    // überbrücken den seitlichen Versatz, während vor und nach dem Versatz weiter parallel
+    // zu DA verlegt wird (bzw. bei DB≈-DA automatisch auch parallel zu DB).
+    const along = delta.dot(DA);
+    const lateral = delta.clone().sub(DA.clone().multiplyScalar(along));
+    const latLen = lateral.length();
+    log('Kollinearer Fall: Vorlauf=',along.toFixed(3),'seitlicher Versatz=',latLen.toFixed(3));
+    if(latLen < MIN_SEG){
+      if(along>2*MIN_SEG && deltaDir.dot(DA)>0.9){
+        log('Kaum Versatz, aber nicht exakt fluchtend -> ein gerades Segment.');
+        return [{dir:DA.clone(), len:delta.length()}];
+      }
+      log('Kollinear, aber kein sinnvoller Versatz gefunden (zu wenig Vorlauf/Versatz).');
+      return null;
+    }
+    const latDir = lateral.clone().normalize();
+    const kinkDir = DA.clone().add(latDir).normalize(); // 45° zwischen DA und Versatzrichtung
+    const L2 = latLen / Math.SQRT1_2;              // Bogenlänge, die genau latLen Versatz erzeugt
+    const forwardUsed = L2*Math.SQRT1_2;            // = latLen, Vorlauf-Anteil des Versatz-Segments
+    const remaining = along - forwardUsed;
+    if(L2>=MIN_SEG && remaining>=2*MIN_SEG){
+      const L1=remaining/2, L3=remaining/2;
+      log('Lösung: Versatz mit 2×45°-Bogen, L1=',L1.toFixed(3),'L2=',L2.toFixed(3),'L3=',L3.toFixed(3));
+      return [{dir:DA.clone(),len:L1},{dir:kinkDir,len:L2},{dir:DA.clone(),len:L3}];
+    }
+    log('Versatz-Geometrie ergäbe zu kurze/negative Segmente (remaining=',remaining.toFixed(3),').');
+    return null;
+  }
+
+  // Nicht-kollinearer Fall (z.B. Ecklösung): DA und DB sind linear unabhängig, ein
+  // Gleichungssystem [DA | Zwischenrichtung | DB] kann daher grundsätzlich lösbar sein.
+
+  // 2 Segmente (ein Bogen): nur exakt lösbar, wenn delta in der von DA/DB aufgespannten Ebene liegt.
+  {
+    const n=new THREE.Vector3().crossVectors(DA,DB).normalize();
+    if(Math.abs(delta.dot(n)) < UNIT*0.01){
+      const uu=DA.dot(DA), uv=DA.dot(DB), vv=DB.dot(DB), ud=DA.dot(delta), vd=DB.dot(delta);
+      const det=uu*vv-uv*uv;
+      if(Math.abs(det)>1e-9){
+        const L1=(ud*vv-vd*uv)/det, L2=(uu*vd-uv*ud)/det;
+        if(L1>=MIN_SEG && L2>=MIN_SEG){
+          log('Lösung: 2 Segmente (ein Bogen).');
+          return [{dir:DA.clone(),len:L1},{dir:DB.clone(),len:L2}];
+        }
+      }
+    }
+  }
+
+  // 3 Segmente (zwei Bögen) über eine Zwischenrichtung aus dem Kandidatensatz.
+  let best=null;
+  turnCandidates(DA).forEach(mid=>{
+    const sol=solve3(DA,mid,DB,delta);
+    if(sol){
+      const total=sol[0]+sol[1]+sol[2];
+      if(!best || total<best.total) best={total, steps:[{dir:DA.clone(),len:sol[0]},{dir:mid.clone(),len:sol[1]},{dir:DB.clone(),len:sol[2]}]};
+    }
+  });
+  if(best){ log('Lösung: 3 Segmente (zwei Bögen), Gesamtlänge=',best.total.toFixed(3)); return best.steps; }
+
+  log('Keine Lösung gefunden.');
+  return null;
+}
+document.getElementById('autoroute').onclick=()=>{
+  const steps=tryAutoRoute();
+  if(!steps){
+    alert('Keine einfache automatische Route gefunden (Details in der Browser-Konsole). Bitte manuell verlegen.');
+    return;
+  }
+  reset();
+  steps.forEach(s=>addSegment(s.dir, undefined, s.len));
+};
+
+['b90','b45'].forEach(id=>document.getElementById(id).onclick=()=>{
+ selectedMode=id; document.querySelectorAll('#modeSwitch button.modebtn').forEach(b=>b.classList.remove('active'));
+ document.getElementById(id).classList.add('active');
+ endpointMarker(current);
+});
+document.getElementById('undo').onclick=undo; document.getElementById('reset').onclick=reset;
+
+// Gizmo (Routing-Griffe) startet ausgeblendet, um den Blick auf die Rohre frei zu halten -
+// wird bei Bedarf über den Knopf oben eingeblendet.
+joints.visible=false;
+const toggleGizmoBtn=document.getElementById('toggleGizmo');
+toggleGizmoBtn.onclick=()=>{ joints.visible=!joints.visible; toggleGizmoBtn.classList.toggle('active',joints.visible); };
+
+const panelEl=document.getElementById('panel');
+const togglePanelBtn=document.getElementById('togglePanel');
+togglePanelBtn.onclick=()=>{
+ const visible=panelEl.style.display==='none';
+ panelEl.style.display=visible?'':'none';
+ togglePanelBtn.classList.toggle('active',visible);
+};
+
+let inCameraView=false;
+const savedCamPos=new THREE.Vector3(), savedCamQuat=new THREE.Quaternion(), savedTarget=new THREE.Vector3();
+const toggleCamViewBtn=document.getElementById('toggleCamView');
+function setControlsEnabled(en){ controls.enabled = en && !inCameraView; }
+toggleCamViewBtn.onclick=()=>{
+ inCameraView=!inCameraView;
+ toggleCamViewBtn.classList.toggle('active',inCameraView);
+ if(inCameraView){
+  savedCamPos.copy(camera.position);
+  savedCamQuat.copy(camera.quaternion);
+  savedTarget.copy(controls.target);
+  camera.position.set(0,0,0);
+  camera.up.set(0,1,0);
+  camera.quaternion.identity();
+  camera.updateMatrixWorld();
+  controls.enabled=false;
+  document.getElementById('hint').textContent='Original-Kamera-Perspektive · Orbit deaktiviert · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
+ } else {
+  camera.position.copy(savedCamPos);
+  camera.quaternion.copy(savedCamQuat);
+  controls.target.copy(savedTarget);
+  controls.enabled=true;
+  controls.update();
+  document.getElementById('hint').textContent='Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
+ }
+};
+
+const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+let draggingRoute=false;
+function pick(e){
+ // THREE.Raycaster prüft .visible NICHT selbst - bei ausgeblendetem Gizmo würden sonst
+ // unsichtbare Griffe weiterhin "blind" antippbar bleiben. Deshalb hier explizit sperren.
+ if(!joints.visible) return null;
+ const r=renderer.domElement.getBoundingClientRect();
+ const x=(e.clientX-r.left)/r.width*2-1,y=-((e.clientY-r.top)/r.height)*2+1;
+ mouse.set(x,y);ray.setFromCamera(mouse,camera);
+ const hit=ray.intersectObjects(joints.children,true).find(x=>x.object.userData.route);
+ return hit?.object.userData.dir||null;
+}
+renderer.domElement.addEventListener('pointerdown',e=>{
+ if(e.pointerType==='touch' || e.button===0){
+  const d=pick(e); if(d){draggingRoute=true;setControlsEnabled(false);addSegment(d)}
+ }
+});
+renderer.domElement.addEventListener('pointerup',()=>{draggingRoute=false;setControlsEnabled(true)});
+renderer.domElement.addEventListener('pointermove',e=>{
+ if(!draggingRoute)return;
+ const d=pick(e); if(d){addSegment(d);draggingRoute=false;setControlsEnabled(true)}
+});
+
+const scalebarFill = document.getElementById('scalebar-fill');
+const scalebarLabel = document.getElementById('scalebar-label');
+function niceScale(raw){
+  const exp = Math.floor(Math.log10(raw));
+  const base = raw / Math.pow(10, exp);
+  let niceBase;
+  if(base < 1.5) niceBase = 1;
+  else if(base < 3.5) niceBase = 2;
+  else if(base < 7.5) niceBase = 5;
+  else niceBase = 10;
+  return niceBase * Math.pow(10, exp);
+}
+function formatLen(m){
+  if(m < 1) return (m*100).toFixed(m<0.1?1:0) + ' cm';
+  return m.toFixed(m<10?2:1) + ' m';
+}
+function updateScaleBar(){
+  const dist = camera.position.distanceTo(controls.target);
+  const vFovRad = camera.fov * Math.PI/180;
+  const worldHeight = 2*dist*Math.tan(vFovRad/2);
+  const h = renderer.domElement.clientHeight || 1;
+  const worldPerPixel = worldHeight / h;
+  const targetPx = 90;
+  const rawWorld = targetPx*worldPerPixel;
+  const niceWorld = niceScale(rawWorld);
+  const px = niceWorld/worldPerPixel;
+  scalebarFill.style.width = Math.max(px,2)+'px';
+  scalebarLabel.textContent = formatLen(niceWorld);
+}
+
+function animate(){requestAnimationFrame(animate);if(!inCameraView)controls.update();updateScaleBar();renderer.render(scene,camera)} animate();
+
+} // Ende startApp()
+
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body></html>

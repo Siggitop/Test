@@ -1,0 +1,13 @@
+{
+  "name": "rohr-routing-app-tests",
+  "private": true,
+  "type": "module",
+  "description": "Nur zum lokalen Ausf\u00fchren der Tests unter tests/ mit Node (siehe README.md) - die App selbst braucht kein npm/Build, sie l\u00e4uft rein \u00fcber <script type=module> und die Importmap in index.html.",
+  "devDependencies": {
+    "fflate": "^0.8.2",
+    "three": "^0.180.0"
+  },
+  "scripts": {
+    "test": "node tests/linalg.test.mjs && node tests/pose-estimation.test.mjs && node tests/npz-loader.test.mjs && node tests/auto-route.test.mjs"
+  }
+}
