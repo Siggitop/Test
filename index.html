@@ -58,10 +58,14 @@ button:disabled{opacity:.45;cursor:not-allowed}
 #captureStatus{color:#fff;font-size:13px;text-align:center;min-height:18px}
 #demoLink{background:none;border:none;color:#9db4d9;text-decoration:underline;font-size:12px;padding:4px}
 #calibToggle{background:rgba(12,20,32,.72);color:#eef4ff;border:1px solid rgba(255,255,255,.25);font-size:12px;padding:7px 11px;border-radius:10px}
-#calibBox{position:absolute;right:14px;top:64px;background:rgba(12,20,32,.9);color:#eef4ff;border-radius:12px;padding:12px;font-size:12px;width:190px;z-index:3;display:none;backdrop-filter:blur(4px)}
+#calibBox{position:absolute;right:14px;left:14px;top:64px;background:rgba(12,20,32,.94);color:#eef4ff;border-radius:12px;padding:14px;font-size:12px;max-width:340px;margin-left:auto;z-index:3;display:none;backdrop-filter:blur(4px);max-height:75vh;overflow-y:auto}
 #calibBox.open{display:block}
 #calibBox label{display:block;margin-top:7px;color:#b9c8e2}
-#calibBox input{width:100%;box-sizing:border-box;padding:6px 8px;font-size:12px;background:#132038;border-color:#2c3f5e;color:#eef4ff;border-radius:7px}
+#calibBox input[type=number],#calibBox input[type=file]{width:100%;box-sizing:border-box;padding:6px 8px;font-size:12px;background:#132038;border-color:#2c3f5e;color:#eef4ff;border-radius:7px}
+.calibTabs{display:flex;gap:4px;margin:4px 0 10px}
+.calibTab{flex:1;padding:7px 4px;font-size:11px;background:#132038;border-color:#2c3f5e;color:#b9c8e2;border-radius:8px}
+.calibTab.active{background:var(--accent);color:#fff;border-color:var(--accent-d)}
+#calibBox button{padding:9px 10px;font-size:12px}
 #analyzeOverlay{position:fixed;inset:0;background:rgba(12,20,32,.88);color:#fff;z-index:30;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;padding:20px;box-sizing:border-box}
 #analyzeOverlay.show{display:flex}
 .spinner{width:38px;height:38px;border-radius:50%;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;animation:spin 1s linear infinite}
@@ -81,14 +85,40 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <button id="calibToggle">⚙ Kalibrierung</button>
  </div>
  <div id="calibBox">
-  <b>Kamera (optional)</b>
-  <label>fx (px)<input id="calFx" type="number" step="1"></label>
-  <label>fy (px)<input id="calFy" type="number" step="1"></label>
-  <label>cx (px)<input id="calCx" type="number" step="1"></label>
-  <label>cy (px)<input id="calCy" type="number" step="1"></label>
-  <label>Markerkante (m)<input id="calMarkerLen" type="number" step="0.001" value="0.0705"></label>
-  <div class="muted" style="color:#8ea3c4;margin-top:8px;font-size:11px;line-height:1.4">Ohne echte Kalibrierung wird fx/fy grob aus der Bildbreite geschätzt (Werte aus camera_calib.npz hier eintragen für genauere Ergebnisse).</div>
+  <b>Kamera-Kalibrierung</b>
+  <div class="muted" style="color:#8ea3c4;margin:4px 0 8px;font-size:11px;line-height:1.4">Ohne Kalibrierung wird fx/fy grob aus der Bildbreite geschätzt - für genaue Ergebnisse eine der drei Optionen nutzen.</div>
+
+  <div class="calibTabs">
+   <button id="calibTabNpz" class="calibTab active">.npz</button>
+   <button id="calibTabCharuco" class="calibTab">Kalibrierblatt</button>
+   <button id="calibTabManual" class="calibTab">Manuell</button>
+  </div>
+
+  <div id="calibPaneNpz" class="calibPane">
+   <div class="muted" style="color:#b9c8e2;margin-bottom:6px">Deine camera_calib.npz (erwartet Arrays "K" und "dist", genau wie im Python-Skript).</div>
+   <input type="file" id="npzFile" accept=".npz">
+   <div id="npzStatus" class="muted" style="margin-top:6px;color:#b9c8e2"></div>
+  </div>
+
+  <div id="calibPaneCharuco" class="calibPane" style="display:none">
+   <div class="muted" style="color:#b9c8e2;margin-bottom:6px">Statt eines echten OpenCV-ChArUco-Boards (dessen genaues Layout sich ohne Test an echter Hardware nicht zuverlässig nachbilden lässt) nutzt das hier ein eigenes Raster aus denselben ArUco-Markern, die die App schon erkennt. Schätzt fx/fy + Bildmitte, <b>keine Verzeichnung</b> (dafür .npz verwenden).</div>
+   <button id="charucoGenerate" style="width:100%">📄 Kalibrierblatt erzeugen &amp; herunterladen</button>
+   <label style="margin-top:8px">Markergröße auf dem Blatt (mm)<input id="charucoSquare" type="number" step="0.1" value="30"></label>
+   <button id="charucoShot" style="width:100%;margin-top:8px">📷 Ausgedrucktes Blatt fotografieren</button>
+   <div id="charucoStatus" class="muted" style="margin-top:6px;color:#b9c8e2"></div>
+  </div>
+
+  <div id="calibPaneManual" class="calibPane" style="display:none">
+   <label>fx (px)<input id="calFx" type="number" step="1"></label>
+   <label>fy (px)<input id="calFy" type="number" step="1"></label>
+   <label>cx (px)<input id="calCx" type="number" step="1"></label>
+   <label>cy (px)<input id="calCy" type="number" step="1"></label>
+  </div>
+
+  <label style="margin-top:10px">Markerkante A/B (m)<input id="calMarkerLen" type="number" step="0.001" value="0.0705"></label>
+  <div id="calibSummary" class="muted" style="margin-top:8px;color:#7be0b0"></div>
  </div>
+ <canvas id="charucoCanvas" style="display:none"></canvas>
  <div id="captureBottom">
   <div id="captureStatus">Beide ArUco-Marker ins Bild halten, ruhig halten, dann auslösen.</div>
   <button id="shutter" aria-label="Foto aufnehmen"></button>
@@ -166,6 +196,7 @@ AR.DICTIONARIES.DICT_6X6_250 = {
 <script type="module">
 import * as THREE from 'three';
 import {OrbitControls} from 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js';
+import {unzipSync} from 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js';
 
 /* ============================================================================
    TEIL 1: Kamera, Schwerkraft-Sensor, ArUco-Erkennung, Pose-Schätzung
@@ -212,10 +243,215 @@ startCamera();
 
 // Grobe Schätzung der Kamera-Matrix K ohne echte Kalibrierung: fx≈fy≈Bildbreite ist eine
 // verbreitete Faustregel für Smartphone-Rückkameras (~55-65° horizontales Sichtfeld).
-// Für genaue Ergebnisse: echte fx/fy/cx/cy aus camera_calib.npz im Kalibrierungs-Feld eintragen.
+// Für genaue Ergebnisse: echte Kalibrierung über eine der drei Optionen im Kalibrierungs-Feld.
 function estimateK(w,h){
   return { fx:w, fy:w, cx:w/2, cy:h/2 };
 }
+
+/* ============================================================================
+   Kamera-Kalibrierung: .npz-Datei ODER eigenes Kalibrierblatt (Grid aus denselben
+   ArUco-Markern, die die App bereits erkennt) ODER manuelle Eingabe.
+   ============================================================================ */
+
+let calibDist = [0,0,0,0,0]; // aktuell aktive Verzeichnungskoeffizienten (nur aus .npz)
+
+function setCalibFields(fx,fy,cx,cy){
+  document.getElementById('calFx').value = fx.toFixed(1);
+  document.getElementById('calFy').value = fy.toFixed(1);
+  document.getElementById('calCx').value = cx.toFixed(1);
+  document.getElementById('calCy').value = cy.toFixed(1);
+}
+function showCalibSummary(text, ok=true){
+  const el = document.getElementById('calibSummary');
+  el.textContent = text;
+  el.style.color = ok ? '#7be0b0' : '#ff8a8a';
+}
+
+// --- Tabs -------------------------------------------------------------------
+const calibTabs = {npz:'calibTabNpz', charuco:'calibTabCharuco', manual:'calibTabManual'};
+const calibPanes = {npz:'calibPaneNpz', charuco:'calibPaneCharuco', manual:'calibPaneManual'};
+Object.keys(calibTabs).forEach(key=>{
+  document.getElementById(calibTabs[key]).onclick = () => {
+    Object.keys(calibTabs).forEach(k=>{
+      document.getElementById(calibTabs[k]).classList.toggle('active', k===key);
+      document.getElementById(calibPanes[k]).style.display = k===key ? '' : 'none';
+    });
+  };
+});
+// Manuelle Eingabe passt zu keiner Verzeichnung mehr, die aus einer .npz stammte.
+['calFx','calFy','calCx','calCy'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', () => {
+    calibDist = [0,0,0,0,0];
+    showCalibSummary('Manuelle Werte aktiv (keine Verzeichnungskorrektur).');
+  });
+});
+
+// --- Option A: .npz-Datei ----------------------------------------------------
+// .npz ist ein ZIP-Archiv mit .npy-Dateien darin (hier: "K.npy", "dist.npy" - exakt die
+// Namen, unter denen das Python-Skript sie per calib["K"]/calib["dist"] anspricht).
+function parseNpy(buffer){
+  const view = new DataView(buffer);
+  const magic = String.fromCharCode(...new Uint8Array(buffer,0,6));
+  if(magic !== '\x93NUMPY') throw new Error('keine gültige .npy-Datei');
+  const major = view.getUint8(6);
+  let headerLen, headerStart;
+  if(major===1){ headerLen=view.getUint16(8,true); headerStart=10; }
+  else { headerLen=view.getUint32(8,true); headerStart=12; }
+  const headerStr = new TextDecoder('ascii').decode(new Uint8Array(buffer,headerStart,headerLen));
+  const descrMatch = headerStr.match(/'descr':\s*'([^']+)'/);
+  const shapeMatch = headerStr.match(/'shape':\s*\(([^)]*)\)/);
+  if(!descrMatch || !shapeMatch) throw new Error('.npy-Header nicht lesbar');
+  const descr = descrMatch[1];
+  const shape = shapeMatch[1].split(',').map(s=>s.trim()).filter(Boolean).map(Number);
+  const dataStart = headerStart+headerLen;
+  const littleEndian = descr[0] !== '>';
+  const type = descr.slice(1);
+  const n = shape.length ? shape.reduce((a,b)=>a*b,1) : 1;
+  let bytesPerEl, getter;
+  if(type==='f8'){bytesPerEl=8; getter=o=>view.getFloat64(o,littleEndian);}
+  else if(type==='f4'){bytesPerEl=4; getter=o=>view.getFloat32(o,littleEndian);}
+  else if(type==='i8'){bytesPerEl=8; getter=o=>Number(view.getBigInt64(o,littleEndian));}
+  else if(type==='i4'){bytesPerEl=4; getter=o=>view.getInt32(o,littleEndian);}
+  else throw new Error('nicht unterstützter numpy-dtype: '+descr);
+  const data = new Float64Array(n);
+  for(let i=0;i<n;i++) data[i]=getter(dataStart+i*bytesPerEl);
+  return {shape,data};
+}
+document.getElementById('npzFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById('npzStatus');
+  if(!file) return;
+  try{
+    const buf = await file.arrayBuffer();
+    const zip = unzipSync(new Uint8Array(buf));
+    const kEntry = Object.keys(zip).find(n=>/(^|\/)K\.npy$/i.test(n));
+    const distEntry = Object.keys(zip).find(n=>/(^|\/)dist\.npy$/i.test(n));
+    if(!kEntry) throw new Error(`kein "K.npy" im Archiv gefunden (enthalten: ${Object.keys(zip).join(', ')})`);
+    const kArr = zip[kEntry];
+    const kParsed = parseNpy(kArr.buffer.slice(kArr.byteOffset, kArr.byteOffset+kArr.byteLength));
+    if(kParsed.data.length < 9) throw new Error('K hat nicht die erwarteten 3×3=9 Werte');
+    const [fx,,cx,,fy,cy] = kParsed.data; // Zeilen-major 3x3: [fx,0,cx, 0,fy,cy, 0,0,1]
+    setCalibFields(fx,fy,cx,cy);
+    if(distEntry){
+      const dArr = zip[distEntry];
+      const dParsed = parseNpy(dArr.buffer.slice(dArr.byteOffset, dArr.byteOffset+dArr.byteLength));
+      calibDist = Array.from(dParsed.data.slice(0,5));
+      while(calibDist.length<5) calibDist.push(0);
+    } else {
+      calibDist = [0,0,0,0,0];
+    }
+    statusEl.innerHTML = `<span style="color:#7be0b0">✓ geladen: fx=${fx.toFixed(1)} fy=${fy.toFixed(1)} cx=${cx.toFixed(1)} cy=${cy.toFixed(1)}${distEntry?' · Verzeichnung inklusive':' · keine Verzeichnung in der Datei gefunden'}</span>`;
+    showCalibSummary('Aktive Kalibrierung: .npz-Datei' + (distEntry?' (inkl. Verzeichnungskorrektur)':''));
+  }catch(err){
+    statusEl.innerHTML = `<span class="errText">Fehler: ${err.message}</span>`;
+  }
+};
+
+// --- Option B: eigenes Kalibrierblatt (Grid aus DICT_6X6_250-Markern) --------
+const CHARUCO_COLS=4, CHARUCO_ROWS=3, CHARUCO_COUNT=CHARUCO_COLS*CHARUCO_ROWS; // IDs 0..11
+function codeToBits36(codeVal){
+  const bits=new Array(36); let r=codeVal;
+  for(let i=35;i>=0;i--){ bits[i]=r%2; r=Math.floor(r/2); }
+  return bits;
+}
+function drawArucoMarkerCell(ctx,x,y,size,id){
+  const code = AR.DICTIONARIES.DICT_6X6_250.codeList[id];
+  const bits = codeToBits36(code);
+  const cell = size/8;
+  ctx.fillStyle='#000'; ctx.fillRect(x,y,size,size);
+  ctx.fillStyle='#fff';
+  for(let r=0;r<6;r++) for(let c=0;c<6;c++){
+    if(bits[r*6+c]===1) ctx.fillRect(x+(c+1)*cell, y+(r+1)*cell, cell, cell);
+  }
+}
+document.getElementById('charucoGenerate').onclick = () => {
+  const squareMm = parseFloat(document.getElementById('charucoSquare').value) || 30;
+  const pxPerMm = 6; // reine Bildschirmauflösung des PNGs, keine Druck-DPI-Annahme -
+  const marginMm = squareMm*0.6, spacingMm = squareMm*1.6;
+  const sizePx = squareMm*pxPerMm;
+  const spacingPx = spacingMm*pxPerMm, marginPx = marginMm*pxPerMm;
+  const canvas = document.getElementById('charucoCanvas');
+  canvas.width = Math.round(marginPx*2 + (CHARUCO_COLS-1)*spacingPx + sizePx);
+  canvas.height = Math.round(marginPx*2 + (CHARUCO_ROWS-1)*spacingPx + sizePx + 60);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(let row=0; row<CHARUCO_ROWS; row++) for(let col=0; col<CHARUCO_COLS; col++){
+    const id = row*CHARUCO_COLS+col;
+    const x = marginPx + col*spacingPx, y = marginPx + row*spacingPx;
+    drawArucoMarkerCell(ctx, x, y, sizePx, id);
+  }
+  ctx.fillStyle='#000'; ctx.font='16px sans-serif';
+  ctx.fillText(`Kalibrierblatt · Markergröße ${squareMm}mm · in Originalgröße (100%) drucken, dann NACHMESSEN`, marginPx, canvas.height-25);
+  const a = document.createElement('a');
+  a.download = 'kalibrierblatt.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+  document.getElementById('charucoStatus').innerHTML = '<span style="color:#7be0b0">✓ heruntergeladen. In Originalgröße (100%, nicht "an Seite anpassen") drucken, danach eine Markerkante mit dem Lineal nachmessen und den tatsächlichen Wert oben eintragen.</span>';
+};
+
+// Least-Squares-Homographie über beliebig viele Punktkorrespondenzen (Normalgleichungen
+// ATA·x=ATb, 8 Unbekannte, h33=1 fixiert) - robuster als die exakte 4-Punkt-Lösung, weil
+// sich Eckenrausch über viele Marker mittelt statt auf 4 Punkte konzentriert zu sein.
+function fitHomographyLS(objPts, imgPts){
+  const ATA = Array.from({length:8},()=>new Array(8).fill(0));
+  const ATb = new Array(8).fill(0);
+  for(let i=0;i<objPts.length;i++){
+    const [X,Y]=objPts[i], [u,v]=imgPts[i];
+    [[[X,Y,1,0,0,0,-X*u,-Y*u],u], [[0,0,0,X,Y,1,-X*v,-Y*v],v]].forEach(([row,rhs])=>{
+      for(let a=0;a<8;a++){ for(let b=0;b<8;b++) ATA[a][b]+=row[a]*row[b]; ATb[a]+=row[a]*rhs; }
+    });
+  }
+  const h = gaussSolve(ATA, ATb);
+  return h ? [[h[0],h[1],h[2]],[h[3],h[4],h[5]],[h[6],h[7],1]] : null;
+}
+// Fokallänge aus zwei orthogonalen Fluchtpunkten (Caprile & Torre 1990): für zueinander
+// senkrechte Weltrichtungen gilt (vp1-Hauptpunkt)·(vp2-Hauptpunkt) = -f² (Skew=0,
+// quadratische Pixel, fx=fy=f vorausgesetzt). Hauptpunkt wird als Bildmitte angenommen.
+function estimateFocalFromGrid(objPts, imgPts, cx, cy){
+  const H = fitHomographyLS(objPts, imgPts);
+  if(!H) return null;
+  const h1=[H[0][0],H[1][0],H[2][0]], h2=[H[0][1],H[1][1],H[2][1]];
+  if(Math.abs(h1[2])<1e-9 || Math.abs(h2[2])<1e-9) return null; // Fluchtpunkt im Unendlichen
+  const vp1={x:h1[0]/h1[2],y:h1[1]/h1[2]}, vp2={x:h2[0]/h2[2],y:h2[1]/h2[2]};
+  const dotv = (vp1.x-cx)*(vp2.x-cx) + (vp1.y-cy)*(vp2.y-cy);
+  return dotv<0 ? Math.sqrt(-dotv) : null;
+}
+document.getElementById('charucoShot').onclick = async () => {
+  const statusEl = document.getElementById('charucoStatus');
+  if(!video.videoWidth){ statusEl.innerHTML='<span class="errText">Kamera nicht bereit.</span>'; return; }
+  statusEl.textContent = 'Analysiere …';
+  await new Promise(r=>setTimeout(r,30));
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video,0,0,c.width,c.height);
+  let found;
+  try{ found = runDetection(c); }
+  catch(err){ statusEl.innerHTML = `<span class="errText">Fehler: ${err.message}</span>`; return; }
+  const onBoard = found.filter(m=>m.id>=0 && m.id<CHARUCO_COUNT);
+  if(onBoard.length < 4){
+    statusEl.innerHTML = `<span class="errText">Nur ${onBoard.length} Markerfelder erkannt (mind. 4 nötig). Blatt flach, gut beleuchtet und möglichst frontal fotografieren.</span>`;
+    return;
+  }
+  const squareMm = parseFloat(document.getElementById('charucoSquare').value) || 30;
+  const squareM = squareMm/1000, spacing = squareM*1.6, hh = squareM/2;
+  const objPts=[], imgPts=[];
+  onBoard.forEach(m=>{
+    const col = m.id % CHARUCO_COLS, row = Math.floor(m.id/CHARUCO_COLS);
+    const wx = col*spacing, wy = -row*spacing;
+    const world = [[wx-hh,wy+hh],[wx+hh,wy+hh],[wx+hh,wy-hh],[wx-hh,wy-hh]];
+    world.forEach((w,i)=>{ objPts.push(w); imgPts.push([m.corners[i].x, m.corners[i].y]); });
+  });
+  const cx = c.width/2, cy = c.height/2;
+  const f = estimateFocalFromGrid(objPts, imgPts, cx, cy);
+  if(!f || !isFinite(f)){
+    statusEl.innerHTML = '<span class="errText">Konnte keine Brennweite bestimmen (Blatt zu frontal/planar im Bild - leicht schräger fotografieren und erneut versuchen).</span>';
+    return;
+  }
+  calibDist = [0,0,0,0,0];
+  setCalibFields(f,f,cx,cy);
+  statusEl.innerHTML = `<span style="color:#7be0b0">✓ ${onBoard.length} Markerfelder erkannt, f=${f.toFixed(1)}px geschätzt.</span>`;
+  showCalibSummary(`Aktive Kalibrierung: Kalibrierblatt (f=${f.toFixed(0)}px, keine Verzeichnung)`);
+};
 
 // --- Schwerkraft-Sensor ---------------------------------------------------
 // Liefert die "Unten"-Richtung im Kamera-Koordinatensystem (OpenCV-Konvention: X rechts,
@@ -340,12 +576,44 @@ function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]}
 function cross3(a,b){return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]}
 function normalize3(a){const n=norm3(a)||1;return scl3(a,1/n)}
 
-function poseFromCorners(corners, markerLength, K){
+// Iterative Entzerrung eines Bildpunkts nach dem Standard-Brown-Conrady-Modell (identisch
+// zu OpenCVs internem Vorgehen in undistortPoints): löst iterativ nach der unverzeichneten
+// Position auf, da das Verzeichnungsmodell selbst nur in der Richtung unverzeichnet->
+// verzeichnet eine geschlossene Formel hat.
+function undistortPoint(u,v,K,dist){
+  const [k1=0,k2=0,p1=0,p2=0,k3=0] = dist||[];
+  if(!k1 && !k2 && !p1 && !p2 && !k3) return {x:u,y:v};
+  let x=(u-K.cx)/K.fx, y=(v-K.cy)/K.fy;
+  const x0=x, y0=y;
+  for(let i=0;i<10;i++){
+    const r2=x*x+y*y;
+    const icdist=1/(1+k1*r2+k2*r2*r2+k3*r2*r2*r2);
+    const dx=2*p1*x*y+p2*(r2+2*x*x);
+    const dy=p1*(r2+2*y*y)+2*p2*x*y;
+    x=(x0-dx)*icdist;
+    y=(y0-dy)*icdist;
+  }
+  return {x:x*K.fx+K.cx, y:y*K.fy+K.cy};
+}
+
+// Symmetrische Orthogonalisierung zweier näherungsweise orthogonaler Einheitsvektoren:
+// mathematisch die Lösung mit der kleinsten GEMEINSAMEN Winkeländerung an beiden Vektoren
+// gleichzeitig (s=a+b und d=a-b sind für Einheitsvektoren immer exakt orthogonal, daraus
+// direkt ein sauberes Paar bilden). Im Unterschied zu Gram-Schmidt (das r1 unangetastet
+// lässt und den GESAMTEN Fehler auf r2 abwälzt) verteilt sich die Korrektur fair auf beide -
+// r1 und r2 kommen aus derselben Homographie-Zerlegung und verdienen gleiches Vertrauen.
+function symmetricOrthogonalize(a,b){
+  const s=normalize3(add3(a,b)), d=normalize3(sub3(a,b));
+  return [normalize3(add3(s,d)), normalize3(sub3(s,d))];
+}
+function add3(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]]}
+
+function poseFromCorners(corners, markerLength, K, dist){
   const h = markerLength/2;
   // Reihenfolge deckungsgleich mit dem Python-Skript (solvePnP-Objektpunkte):
   // TL=(-h,h) TR=(h,h) BR=(h,-h) BL=(-h,-h); corners[0..3] = TL,TR,BR,BL.
   const objPts = [[-h,h],[h,h],[h,-h],[-h,-h]];
-  const imgPts = corners.map(c=>[c.x,c.y]);
+  const imgPts = corners.map(c=>{ const u=undistortPoint(c.x,c.y,K,dist); return [u.x,u.y]; });
   const H = solveHomography(objPts, imgPts);
   if(!H) return null;
   const KinvA = 1/K.fx, KinvE = 1/K.fy, KinvC = -K.cx/K.fx, KinvF = -K.cy/K.fy;
@@ -355,10 +623,7 @@ function poseFromCorners(corners, markerLength, K){
   let lambda = 2/(norm3(kh1)+norm3(kh2));
   let r1=scl3(kh1,lambda), r2=scl3(kh2,lambda), t=scl3(kh3,lambda);
   if(t[2] < 0){ lambda=-lambda; r1=scl3(kh1,lambda); r2=scl3(kh2,lambda); t=scl3(kh3,lambda); }
-  // Gram-Schmidt-Orthonormalisierung (statt echter SVD - für nahezu-fronto-parallele
-  // Aufnahmen ausreichend genau, hält den Code ohne zusätzliche Bibliothek schlank).
-  r1 = normalize3(r1);
-  r2 = normalize3(sub3(r2, scl3(r1, dot3(r2,r1))));
+  [r1,r2] = symmetricOrthogonalize(normalize3(r1), normalize3(r2));
   const r3 = cross3(r1,r2);
   return {
     position:{x:t[0],y:t[1],z:t[2]},
@@ -368,9 +633,47 @@ function poseFromCorners(corners, markerLength, K){
   };
 }
 
-function runDetection(imageData){
+// js-aruco2 ist ein deutlich simplerer Detektor als OpenCV: ein einziger fest verdrahteter
+// Adaptive-Threshold (Fenstergröße intern fix), keine Mehrskalen-Suche. Bei einem Foto in
+// voller Handy-Auflösung (z.B. 1920×1080) kann dieses feste Fenster für große, nahe Marker
+// ungünstig sitzen, während ein kleinerer/entfernterer Marker im selben Bild gut erkannt
+// wird (oder umgekehrt) - genau das erklärt "nur noch 1 Marker". Abhilfe: dieselbe Aufnahme
+// zusätzlich in 2 kleineren Auflösungen erneut versuchen und die gefundenen IDs zusammen-
+// führen. Das ist kein Ersatz für OpenCVs deutlich robusteren Detektor, aber ein sehr
+// wirksamer, günstiger Kompromiss ohne die Bibliothek selbst patchen zu müssen.
+function detectAtScale(canvas, scale){
+  let srcCanvas = canvas;
+  if(scale !== 1){
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(canvas.width*scale));
+    c.height = Math.max(1, Math.round(canvas.height*scale));
+    c.getContext('2d').drawImage(canvas, 0,0,c.width,c.height);
+    srcCanvas = c;
+  }
+  const ctx = srcCanvas.getContext('2d', {willReadFrequently:true});
+  const imageData = ctx.getImageData(0,0,srcCanvas.width,srcCanvas.height);
   const detector = new AR.Detector({dictionaryName:'DICT_6X6_250'});
-  return detector.detect(imageData);
+  const found = detector.detect(imageData);
+  // Ecken zurück auf die Auflösung der Originalaufnahme skalieren, damit K (fx/fy/cx/cy,
+  // bezogen auf die Originalgröße) weiterhin passt.
+  if(scale !== 1){
+    found.forEach(m=>m.corners.forEach(c=>{ c.x/=scale; c.y/=scale; }));
+  }
+  return found;
+}
+function runDetection(canvas){
+  const uniqueById = new Map();
+  const scalesTried = [];
+  for(const scale of [1, 0.55, 0.35]){
+    let found;
+    try{ found = detectAtScale(canvas, scale); }
+    catch(err){ console.warn('[Erkennung] Fehler bei Skalierung',scale,err); continue; }
+    scalesTried.push(`${scale}: ${found.length} gefunden`);
+    found.forEach(m=>{ if(!uniqueById.has(m.id)) uniqueById.set(m.id, m); });
+    if(uniqueById.size >= 2) break;
+  }
+  console.log('[Erkennung] Versuche:', scalesTried.join(' · '));
+  return [...uniqueById.values()].sort((a,b)=>a.id-b.id);
 }
 
 // --- Ablauf: Auslösen -> Frame + Schwerkraft einfrieren -> auswerten ------
@@ -381,23 +684,18 @@ shutterBtn.onclick = async () => {
   captureCanvas.height = video.videoHeight;
   const ctx = captureCanvas.getContext('2d', {willReadFrequently:true});
   ctx.drawImage(video,0,0,captureCanvas.width,captureCanvas.height);
-  const imageData = ctx.getImageData(0,0,captureCanvas.width,captureCanvas.height);
 
   analyzeOverlay.classList.add('show');
   analyzeText.textContent = 'Marker werden gesucht …';
   resultBox.style.display='none';
   await new Promise(r=>setTimeout(r,30)); // UI erst rendern lassen, dann (blockierend) erkennen
 
-  let markers;
-  try{ markers = runDetection(imageData); }
+  let found;
+  try{ found = runDetection(captureCanvas); }
   catch(err){ showAnalyzeError('Fehler bei der Bilderkennung: '+err.message); return; }
 
-  const uniqueById = new Map();
-  markers.forEach(m=>{ if(!uniqueById.has(m.id)) uniqueById.set(m.id,m); });
-  const found = [...uniqueById.values()].sort((a,b)=>a.id-b.id);
-
   if(found.length < 2){
-    showAnalyzeError(`Nur ${found.length} Marker erkannt (mind. 2 nötig). Näher ran, mehr Licht, oder erneut versuchen.`);
+    showAnalyzeError(`Nur ${found.length} Marker erkannt (mind. 2 nötig). Näher ran, mehr Licht, Marker möglichst frontal und beide etwa gleich groß im Bild - dann "Erneut versuchen". Details siehe Browser-Konsole.`);
     return;
   }
 
@@ -410,8 +708,8 @@ shutterBtn.onclick = async () => {
   const markerLength = parseFloat(document.getElementById('calMarkerLen').value) || 0.0705;
 
   const mA = found[0], mB = found[1];
-  const poseA = poseFromCorners(mA.corners, markerLength, K);
-  const poseB = poseFromCorners(mB.corners, markerLength, K);
+  const poseA = poseFromCorners(mA.corners, markerLength, K, calibDist);
+  const poseB = poseFromCorners(mB.corners, markerLength, K, calibDist);
   if(!poseA || !poseB){
     showAnalyzeError('Pose konnte nicht berechnet werden (Homographie singulär). Anderer Blickwinkel, dann erneut versuchen.');
     return;
@@ -425,10 +723,12 @@ shutterBtn.onclick = async () => {
   if(gravityDown) markerData.gravityDown = gravityDown;
 
   const distMM = (Math.hypot(poseA.position.x-poseB.position.x, poseA.position.y-poseB.position.y, poseA.position.z-poseB.position.z)*1000).toFixed(1);
+  const hasDist = calibDist.some(v=>v!==0);
   resultBox.style.display='block';
   resultBox.innerHTML = `<b class="okText">✓ ${found.length} Marker erkannt</b>
    Verwendet: Marker ${mA.id} &amp; ${mB.id}<br>
    Abstand: ${distMM} mm<br>
+   Kalibrierung: fx=${K.fx.toFixed(0)} fy=${K.fy.toFixed(0)}${hasDist?' · inkl. Verzeichnungskorrektur':''}<br>
    Schwerkraft-Referenz: ${gravityDown?'<span class="okText">vorhanden</span>':'<span class="errText">fehlt (Ebene wird aus Markern geschätzt)</span>'}
    <div class="row" style="margin-top:12px;gap:8px">
      <button id="goToScene" class="primary" style="flex:1">Weiter zur 3D-Ansicht</button>
@@ -598,6 +898,23 @@ let history=[], selectedMode='b90';
 document.getElementById('markerInfo').textContent =
   `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist*100).toFixed(1)} cm` +
   (usedGravity ? ' · Horizontale aus Schwerkraft-Sensor' : ' · keine Horizontale (Sensor war bei der Aufnahme nicht verfügbar)');
+
+// Rein informativ: Winkel der jeweiligen Rohrachse (xAxis) zur Schwerkraft. Wird NICHT
+// automatisch zur Korrektur der Marker-Rotation verwendet - ein einzelner Marker hat
+// keine feste Beziehung zur Schwerkraft (das Rohr kann in jede Richtung zeigen), daher
+// wäre ein automatisches "Einrasten" ohne bekannte Anbau-Konvention riskant. Hilft aber
+// beim Plausibilisieren: exakt 0°/90° ist bei geraden HLK-Rohrläufen der Normalfall.
+if(usedGravity){
+  const angleTo = (axis)=>{
+    let a = THREE.MathUtils.radToDeg(axis.angleTo(tableNormal));
+    const fromHorizontal = Math.abs(90-a);
+    if(fromHorizontal < 2) return 'horizontal (±'+fromHorizontal.toFixed(1)+'°)';
+    if(a < 2 || a > 178) return 'vertikal (±'+Math.min(a,180-a).toFixed(1)+'°)';
+    return (90-fromHorizontal<45? (90-a).toFixed(0)+'° über der Horizontalen' : a.toFixed(0)+'° zur Vertikalen');
+  };
+  console.log('Rohrachse A relativ zur Schwerkraft:', angleTo(markerA.xAxis));
+  console.log('Rohrachse B relativ zur Schwerkraft:', angleTo(markerB.xAxis));
+}
 
 console.log('ArUco Marker A:', markerA);
 console.log('ArUco Marker B:', markerB);
