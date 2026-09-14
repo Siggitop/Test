@@ -8,10 +8,13 @@
  * Echtzeit-Klick-Ergebnis weder nötig noch praxisgerecht, da real verlegte Rohre ohnehin
  * nur in Waage/senkrecht/45° liegen, siehe pipe-alignment.js).
  *
- * Startrichtung an A = markerA.xAxis (wie beim manuellen Routing). Ankunftsrichtung an B
- * = -markerB.xAxis: an B zeigt +X in Richtung des vorhandenen Rohrs dahinter (siehe
- * geometry-helpers.createFadingStub), die neue Route muss also aus der Gegenrichtung
- * ankommen, um sauber in einer Linie in das vorhandene Rohr überzugehen.
+ * Startrichtung an A = -markerA.xAxis (wie beim manuellen Routing). +X zeigt jeweils in
+ * Richtung des vorhandenen (unmodellierten) Rohrs dahinter (siehe
+ * geometry-helpers.createFadingStub) - die Marker-Mitte ist das offene Ende dieses
+ * vorhandenen Rohrs. Die neue Route muss also auf der GEGENrichtung (-X) beginnen bzw.
+ * ankommen, da +X bereits vom vorhandenen Rohr belegt ist. Ankunftsrichtung an B =
+ * +markerB.xAxis (die Route nähert sich B aus dessen -X-Richtung und bewegt sich beim
+ * Ankommen in +X, um sauber in einer Linie ins vorhandene Rohr überzugehen).
  *
  * VORGEHEN: `tryAutoRoute` bricht NICHT beim ersten Treffer ab, sondern sammelt Kandidaten
  * aus mehreren Strategien und gibt am Ende die mit der kürzesten Gesamtlänge zurück -
@@ -271,8 +274,8 @@ function buildCandidatePool(DA, DB) {
  *   wenn keine einfache Lösung gefunden wurde (Details siehe Browser-Konsole)
  */
 export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
-  const A = markerA.position, DA = markerA.xAxis.clone().normalize();
-  const B = markerB.position, DB = markerB.xAxis.clone().normalize().negate();
+  const A = markerA.position, DA = markerA.xAxis.clone().normalize().negate();
+  const B = markerB.position, DB = markerB.xAxis.clone().normalize();
   const delta = new THREE.Vector3().subVectors(B, A);
   const log = (...a) => console.log('[AutoRoute]', ...a);
 

@@ -46,8 +46,8 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
 
 // 1. Demo-Daten: gerade Verlängerung
 {
-  const A = marker([0, 0, 0], [1, 0, 0]);
-  const B = marker([2, 0, 0], [-1, 0, 0]);
+  const A = marker([0, 0, 0], [-1, 0, 0]);
+  const B = marker([2, 0, 0], [1, 0, 0]);
   const steps = tryAutoRoute(A, B, 2, 0.01);
   checkStepsReachTarget('Demo (gerade)', steps, A, B);
   check('Demo (gerade): genau 1 Segment', steps && steps.length === 1);
@@ -55,8 +55,8 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
 
 // 2. Paralleler Versatz (der Regelfall) - 30cm Vorlauf, 5cm seitlicher Versatz
 {
-  const A = marker([0, 0, 0], [1, 0, 0]);
-  const B = marker([0.3, 0.05, 0], [-1, 0, 0]);
+  const A = marker([0, 0, 0], [-1, 0, 0]);
+  const B = marker([0.3, 0.05, 0], [1, 0, 0]);
   const unit = A.position.distanceTo(B.position);
   const steps = tryAutoRoute(A, B, unit, unit * 0.02);
   checkStepsReachTarget('Versatz 5cm', steps, A, B);
@@ -68,8 +68,8 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
 //    (komplexerer Weg mit zusätzlichen Zwischenrichtungen) findet trotzdem eine gültige,
 //    geometrisch exakte Lösung statt hier aufzugeben.
 {
-  const A = marker([0, 0, 0], [1, 0, 0]);
-  const B = marker([0.06, 0.05, 0], [-1, 0, 0]);
+  const A = marker([0, 0, 0], [-1, 0, 0]);
+  const B = marker([0.06, 0.05, 0], [1, 0, 0]);
   const unit = A.position.distanceTo(B.position);
   const steps = tryAutoRoute(A, B, unit, 0.03);
   checkStepsReachTarget('Enger Versatz (komplexer Weg)', steps, A, B);
@@ -87,9 +87,9 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
 //    vergleichende Algorithmus findet jetzt eine echte 5-Segment-Lösung mit spürbar
 //    weniger Gesamtlänge (näher an der theoretischen Luftlinie von ≈0.354).
 {
-  const A = marker([0, 0, 0], [1, 0, 0]);
+  const A = marker([0, 0, 0], [-1, 0, 0]);
   // delta = 0.2*(1,0,0) + 0.15*(0,1,0) + 0.25*(0,0,-1) = (0.2, 0.15, -0.25)
-  const B = marker([0.2, 0.15, -0.25], [0, 0, 1]); // DB = -B.xAxis = (0,0,-1)
+  const B = marker([0.2, 0.15, -0.25], [0, 0, -1]); // DB = +B.xAxis = (0,0,-1)
   const unit = A.position.distanceTo(B.position);
   const steps = tryAutoRoute(A, B, unit, unit * 0.02);
   checkStepsReachTarget('90°-Ecke (3D, konstruiert lösbar)', steps, A, B);
@@ -109,8 +109,8 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
 //    auto-route.js, "KOMPLEXERE WEGE"), der zusätzliche Zwischenrichtungen mit
 //    Z-Komponente kombiniert, die sich am Ende gegenseitig aufheben.
 {
-  const A = marker([0, 0, 0], [1, 0, 0]);
-  const B = marker([0.3, 0.3, 0], [0, 1, 0]);
+  const A = marker([0, 0, 0], [-1, 0, 0]);
+  const B = marker([0.3, 0.3, 0], [0, -1, 0]);
   const unit = A.position.distanceTo(B.position);
   const steps = tryAutoRoute(A, B, unit, unit * 0.02);
   checkStepsReachTarget('Ehemalige Grenze (voll-koplanare Ecke, jetzt per komplexem Weg lösbar)', steps, A, B);

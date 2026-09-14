@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js';
 
 import {
-  createCylinderMesh, createElbowMesh, createFadingStub, createMarkerVisual,
+  createLineSegment, createFadingStub, createMarkerVisual,
   perpDirs, colorForDirection, CARDINALS, createLabelSprite,
 } from './geometry-helpers.js';
 import { setupHorizontalPlane, logPipeAxisAnglesToGravity } from './horizontal-plane.js';
@@ -239,12 +239,11 @@ export class PipeRoutingApp {
 
   _setupRoutingState() {
     this.current = this.markerA.position.clone();
-    this.direction = this.markerA.xAxis.clone();
+    // +xAxis zeigt zum vorhandenen (unmodellierten) Rohr hinter dem Marker - die neue
+    // Route muss auf der Gegenseite (-xAxis) losgehen, siehe auto-route.js Dateikopf.
+    this.direction = this.markerA.xAxis.clone().negate();
     this.history = [];
     this.selectedMode = 'b90';
-    this.lastPipeMesh = null;
-    this.lastPipeStart = null;
-    this.lastPipeEnd = null;
     this._drawEndpointHandles(this.current);
   }
 
@@ -305,18 +304,9 @@ export class PipeRoutingApp {
     const end = this.current.clone().add(dir.clone().normalize().multiplyScalar(len));
     this.history.push({ dir: dir.clone(), mode, len });
 
-    if (mode === 'straight') {
-      this._addPipe(this.current, end);
-    } else {
-      if (this.lastPipeMesh) {
-        this.pipes.remove(this.lastPipeMesh);
-        const trimmedEnd = this.current.clone().sub(this.direction.clone().normalize().multiplyScalar(this.PIPE_R * 3));
-        this._addPipe(this.lastPipeStart, trimmedEnd);
-      }
-      const { mesh, p1 } = createElbowMesh(this.current, this.direction, dir, this.PIPE_R);
-      this.pipes.add(mesh);
-      this._addPipe(p1, end);
-    }
+    // Vorerst nur der exakte geometrische Weg als scharfe Linie (kein Zylinder, keine
+    // Rohrbögen an den Knicken) - echte Rohr-Darstellung kommt später.
+    this._addPipe(this.current, end);
 
     this.current.copy(end);
     this.direction.copy(dir).normalize();
@@ -324,32 +314,27 @@ export class PipeRoutingApp {
   }
 
   _addPipe(a, b) {
-    const mesh = createCylinderMesh(a, b, this.PIPE_R, false);
-    this.pipes.add(mesh);
-    this.lastPipeMesh = mesh;
-    this.lastPipeStart = a.clone();
-    this.lastPipeEnd = b.clone();
-    return mesh;
+    const line = createLineSegment(a, b);
+    this.pipes.add(line);
+    return line;
   }
 
   undo() {
     if (!this.history.length) return;
     this.pipes.clear();
-    this.lastPipeMesh = null;
     const h = this.history.slice(0, -1);
     this.history = [];
     this.current.copy(this.markerA.position);
-    this.direction.copy(this.markerA.xAxis).normalize();
+    this.direction.copy(this.markerA.xAxis).normalize().negate();
     h.forEach((x) => this.addSegment(x.dir, x.mode, x.len));
     this._drawEndpointHandles(this.current);
   }
 
   reset() {
     this.pipes.clear();
-    this.lastPipeMesh = null;
     this.history = [];
     this.current.copy(this.markerA.position);
-    this.direction.copy(this.markerA.xAxis).normalize();
+    this.direction.copy(this.markerA.xAxis).normalize().negate();
     this._drawEndpointHandles(this.current);
   }
 

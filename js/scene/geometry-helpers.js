@@ -22,6 +22,17 @@ export function pipeMaterial(active = false) {
   });
 }
 
+/** Einfache Linie zwischen zwei Punkten - vorläufiger Platzhalter für die spätere echte
+ *  Rohr-Darstellung (Zylinder + Bögen, siehe createCylinderMesh/createElbowMesh unten).
+ *  Zeichnet den Routing-Weg exakt geometrisch, ohne Bogenradien - jede Richtungsänderung
+ *  ist bewusst ein scharfer Knick statt eines Rohrbogens. */
+export function createLineSegment(a, b, color = 0x2468e8) {
+  return new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([a, b]),
+    new THREE.LineBasicMaterial({ color })
+  );
+}
+
 /** Erzeugt einen Rohrzylinder zwischen zwei Punkten (noch NICHT einer Gruppe hinzugefügt -
  *  das macht der Aufrufer, damit diese Funktion zustandslos bleibt). */
 export function createCylinderMesh(a, b, radius, active = false) {
