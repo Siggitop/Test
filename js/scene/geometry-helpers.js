@@ -105,7 +105,7 @@ export function createArrow(start, dir, length, color) {
   ]);
   group.add(new THREE.Line(lineGeom, new THREE.LineBasicMaterial({ color })));
   const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(Math.max(length * 0.1, 0.008), Math.max(length * 0.25, 0.02), 12),
+    new THREE.ConeGeometry(Math.max(length * 0.06, 0.005), Math.max(length * 0.16, 0.013), 12),
     new THREE.MeshBasicMaterial({ color })
   );
   cone.position.copy(dir.clone().multiplyScalar(length));

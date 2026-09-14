@@ -99,11 +99,11 @@ export class PipeRoutingApp {
     const UNIT = this.UNIT;
     this.PIPE_R = THREE.MathUtils.clamp(UNIT * 0.045, 0.0018, 0.06);
     this.SEG_LEN = THREE.MathUtils.clamp(UNIT * 0.55, 0.02, 1.0);
-    this.ENDPOINT_R = THREE.MathUtils.clamp(UNIT * 0.09, 0.0035, 0.09);
+    this.ENDPOINT_R = THREE.MathUtils.clamp(UNIT * 0.06, 0.0025, 0.06);
     this.HANDLE_OFF = THREE.MathUtils.clamp(UNIT * 0.42, 0.015, 0.48);
     this.HANDLE_R = THREE.MathUtils.clamp(UNIT * 0.06, 0.0022, 0.06);
     this.HANDLE_LINE = this.HANDLE_OFF * 0.65;
-    this.MARKER_R = THREE.MathUtils.clamp(UNIT * 0.08, 0.006, 0.04);
+    this.MARKER_R = THREE.MathUtils.clamp(UNIT * 0.055, 0.004, 0.026);
     this.MARKER_ARROW = THREE.MathUtils.clamp(UNIT * 0.9, 0.06, 0.55);
     this.STUB_LEN = THREE.MathUtils.clamp(0.35, 0.02, this.markerDist * 0.45);
     this.MIN_SEG = Math.max(this.PIPE_R * 3, UNIT * 0.01);
@@ -360,7 +360,9 @@ export class PipeRoutingApp {
           this.camera.fov = calibratedVerticalFov(this.calibK, this.camera.aspect);
           this.camera.updateProjectionMatrix();
         }
-        hintEl.textContent = 'Original-Kamera-Perspektive · Ziehen zum Schwenken · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
+        this._pinchLastDist = null;
+        this._activePointers.clear();
+        hintEl.textContent = 'Original-Kamera-Perspektive · Ziehen zum Schwenken · Scrollen/Kneifen zum Zoomen · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
       } else {
         this.camera.position.copy(this._savedCamPos);
         this.camera.quaternion.copy(this._savedCamQuat);
@@ -384,6 +386,10 @@ export class PipeRoutingApp {
     this.draggingRoute = false;
     this._lookDragging = false;
     this._lookLast = { x: 0, y: 0 };
+    // Für Pinch-Zoom in der Kamerasicht: alle aktuell aufliegenden Touch-Pointer, damit
+    // sich bei genau 2 Fingern der Abstand zwischen ihnen verfolgen lässt.
+    this._activePointers = new Map();
+    this._pinchLastDist = null;
 
     const pick = (e) => {
       // THREE.Raycaster prüft .visible NICHT selbst - bei ausgeblendetem Gizmo würden
@@ -411,8 +417,32 @@ export class PipeRoutingApp {
       this.camera.quaternion.setFromEuler(new THREE.Euler(this._camViewPitch, this._camViewYaw, 0, 'YXZ'));
     };
 
+    // Zoom in der Kamerasicht: verändert nur das FOV (wie ein echtes Kamerazoom), die
+    // Position bleibt exakt am Aufnahmepunkt - sonst wäre es kein "Blick aus der Kamera" mehr.
+    const ZOOM_MIN_FOV = 12, ZOOM_MAX_FOV = 100;
+    const setFov = (fov) => {
+      this.camera.fov = THREE.MathUtils.clamp(fov, ZOOM_MIN_FOV, ZOOM_MAX_FOV);
+      this.camera.updateProjectionMatrix();
+    };
+
+    this.renderer.domElement.addEventListener('wheel', (e) => {
+      if (!this.inCameraView) return;
+      e.preventDefault();
+      setFov(this.camera.fov + e.deltaY * 0.05);
+    }, { passive: false });
+
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch') {
+        this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this._activePointers.size >= 2) {
+          // Zweiter Finger übernimmt fürs Zoomen - ein evtl. laufendes Einzelfinger-
+          // Schwenken pausiert, bis wieder nur ein Finger aufliegt.
+          this._lookDragging = false;
+          this._pinchLastDist = null;
+        }
+      }
       if (e.pointerType === 'touch' || e.button === 0) {
+        if (this.inCameraView && this._activePointers.size >= 2) return;
         const d = pick(e);
         if (d) {
           this.draggingRoute = true; this._setControlsEnabled(false); this.addSegment(d);
@@ -423,15 +453,33 @@ export class PipeRoutingApp {
         }
       }
     });
-    this.renderer.domElement.addEventListener('pointerup', (e) => {
+    const endTouch = (e) => {
+      if (e.pointerType === 'touch') {
+        this._activePointers.delete(e.pointerId);
+        if (this._activePointers.size < 2) this._pinchLastDist = null;
+      }
       this.draggingRoute = false;
       this._setControlsEnabled(true);
       if (this._lookDragging) {
         this._lookDragging = false;
         this.renderer.domElement.releasePointerCapture(e.pointerId);
       }
-    });
+    };
+    this.renderer.domElement.addEventListener('pointerup', endTouch);
+    this.renderer.domElement.addEventListener('pointercancel', endTouch);
     this.renderer.domElement.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch' && this._activePointers.has(e.pointerId)) {
+        this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (this.inCameraView && this._activePointers.size >= 2) {
+        const [p1, p2] = this._activePointers.values();
+        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        if (this._pinchLastDist != null && this._pinchLastDist > 1) {
+          setFov(this.camera.fov * (this._pinchLastDist / dist));
+        }
+        this._pinchLastDist = dist;
+        return;
+      }
       if (this._lookDragging) {
         applyLook(e.clientX - this._lookLast.x, e.clientY - this._lookLast.y);
         this._lookLast.x = e.clientX; this._lookLast.y = e.clientY;
