@@ -1,81 +1,67 @@
 /**
  * detection.js
  * ------------
- * Markererkennung über js-aruco2, mit einem Mehrskalen-Kompromiss gegen dessen größte
- * Schwäche gegenüber OpenCV.
+ * Markererkennung über opencv.js (ArUco/objdetect-Modul, seit OpenCV 4.7 Teil des
+ * Kernmoduls - kein separates contrib-Modul nötig). Nutzt Sub-Pixel-Eckenverfeinerung
+ * (CORNER_REFINE_APRILTAG - die genaueste verfügbare Variante; die App verarbeitet ein
+ * Einzelfoto, nicht Echtzeit-Video, der Mehraufwand ist unkritisch), was hier direkt die
+ * Eckengenauigkeit verbessert, die vorher (mit js-aruco2, ohne Sub-Pixel-Verfeinerung) die
+ * Hauptursache für die beobachteten Reprojektionsfehler war.
  *
- * js-aruco2 ist ein deutlich simplerer Detektor als OpenCV: ein einziger, fest
- * verdrahteter Adaptive-Threshold (feste interne Fenstergröße), keine Mehrskalen-Suche.
- * Bei einem Foto in voller Handy-Auflösung (z.B. 1920×1080) kann dieses feste Fenster für
- * einen großen/nahen Marker ungünstig sitzen, während ein kleinerer/entfernterer Marker
- * im selben Bild gut erkannt wird (oder umgekehrt) - in der Praxis äußert sich das genau
- * als "nur einer von zwei Markern wird gefunden".
- *
- * Abhilfe ohne die Bibliothek selbst patchen zu müssen: dieselbe Aufnahme zusätzlich in
- * zwei kleineren Auflösungen erneut versuchen und die gefundenen Marker-IDs
- * zusammenführen. Kein Ersatz für OpenCVs Robustheit, aber ein wirksamer, günstiger
- * Kompromiss.
+ * Verantwortlich NUR für die Erkennung selbst (Marker-IDs + deren 4 Bildecken) - die
+ * Posenschätzung daraus passiert in pose-estimation.js.
  */
 
-import { DICTIONARY_NAME } from './aruco-setup.js';
-
-/** Auflösungsstufen (relativ zur Originalgröße), die der Reihe nach versucht werden. */
-const DETECTION_SCALES = [1, 0.55, 0.35];
+let detector = null;
 
 /**
- * Erkennt Marker in einem einzelnen Canvas bei einer bestimmten Skalierung.
- *
- * @param {HTMLCanvasElement} canvas Quellbild in Originalauflösung
- * @param {number} scale 1 = Originalgröße, <1 = verkleinert
- * @returns {Array} gefundene Marker (js-aruco2-Format: {id, corners, hammingDistance})
+ * Baut den ArucoDetector beim ersten Aufruf (lazy, da `cv` zu diesem Zeitpunkt bereits
+ * initialisiert sein muss - siehe opencv-ready.js/main.js, das den Aufrufer erst nach
+ * Abschluss der WASM-Init startet).
  */
-function detectAtScale(canvas, scale) {
-  let srcCanvas = canvas;
-  if (scale !== 1) {
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(canvas.width * scale));
-    c.height = Math.max(1, Math.round(canvas.height * scale));
-    c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
-    srcCanvas = c;
+function getDetector() {
+  if (!detector) {
+    const dict = cv.getPredefinedDictionary(cv.DICT_6X6_250);
+    const params = new cv.aruco_DetectorParameters();
+    params.cornerRefinementMethod = cv.CORNER_REFINE_APRILTAG;
+    const refineParams = new cv.aruco_RefineParameters(10, 3, true);
+    detector = new cv.aruco_ArucoDetector(dict, params, refineParams);
   }
-  const ctx = srcCanvas.getContext('2d', { willReadFrequently: true });
-  const imageData = ctx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
-  const detector = new AR.Detector({ dictionaryName: DICTIONARY_NAME });
-  const found = detector.detect(imageData);
-
-  // Ecken zurück auf die Auflösung der Originalaufnahme skalieren, damit die
-  // Kamera-Matrix K (fx/fy/cx/cy, bezogen auf die Originalgröße) weiterhin passt.
-  if (scale !== 1) {
-    found.forEach((m) => m.corners.forEach((c) => { c.x /= scale; c.y /= scale; }));
-  }
-  return found;
+  return detector;
 }
 
 /**
- * Erkennt Marker in einem Canvas, probiert bei Bedarf mehrere Auflösungsstufen durch und
- * führt die gefundenen IDs zusammen. Bricht früh ab, sobald mindestens 2 verschiedene
- * Marker gefunden wurden (das Minimum, das die App für eine Rohrverbindung braucht).
+ * Erkennt Marker in einem Canvas.
  *
- * @param {HTMLCanvasElement} canvas
- * @returns {Array} eindeutige gefundene Marker, aufsteigend nach ID sortiert
+ * @param {HTMLCanvasElement} canvas Quellbild
+ * @returns {Array<{id:number, corners:Array<{x:number,y:number}>}>} gefundene Marker,
+ *   aufsteigend nach ID sortiert. Ecken in TL/TR/BR/BL-Reihenfolge (OpenCV-Konvention,
+ *   von pose-estimation.js direkt so erwartet).
  */
 export function runDetection(canvas) {
-  const uniqueById = new Map();
-  const scalesTried = [];
+  const src = cv.imread(canvas);
+  const corners = new cv.MatVector();
+  const ids = new cv.Mat();
+  const rejected = new cv.MatVector();
+  try {
+    getDetector().detectMarkers(src, corners, ids, rejected);
 
-  for (const scale of DETECTION_SCALES) {
-    let found;
-    try {
-      found = detectAtScale(canvas, scale);
-    } catch (err) {
-      console.warn('[Erkennung] Fehler bei Skalierung', scale, err);
-      continue;
+    const found = [];
+    for (let i = 0; i < ids.rows; i++) {
+      const c = corners.get(i);
+      const pts = [];
+      for (let p = 0; p < 4; p++) pts.push({ x: c.data32F[p * 2], y: c.data32F[p * 2 + 1] });
+      c.delete();
+      found.push({ id: ids.data32S[i], corners: pts });
     }
-    scalesTried.push(`${scale}: ${found.length} gefunden`);
-    found.forEach((m) => { if (!uniqueById.has(m.id)) uniqueById.set(m.id, m); });
-    if (uniqueById.size >= 2) break;
+    found.sort((a, b) => a.id - b.id);
+    return found;
+  } finally {
+    // WASM-Heap-Speicher wird nicht vom JS-Garbage-Collector erfasst - jedes erzeugte
+    // cv.Mat/MatVector muss explizit freigegeben werden.
+    src.delete();
+    corners.delete();
+    ids.delete();
+    rejected.delete();
   }
-
-  console.log('[Erkennung] Versuche:', scalesTried.join(' · '));
-  return [...uniqueById.values()].sort((a, b) => a.id - b.id);
 }

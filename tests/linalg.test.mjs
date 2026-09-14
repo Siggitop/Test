@@ -7,7 +7,6 @@
  * Ausführen: node tests/linalg.test.mjs
  */
 import { gaussSolve, symmetricOrthogonalize, dot3, normalize3 } from '../js/vision/linalg.js';
-import { DICT_6X6_250_CODES } from '../js/vision/dictionary-6x6-250-data.js';
 
 let failures = 0;
 function check(name, cond) {
@@ -40,38 +39,6 @@ function check(name, cond) {
   const angleB = Math.acos(Math.min(1, dot3(b, bp))) * 180 / Math.PI;
   check('symmetricOrthogonalize: Ergebnis ist exakt orthogonal', Math.abs(dotAfter) < 1e-9);
   check('symmetricOrthogonalize: Korrektur verteilt sich fair (±0.01°)', Math.abs(angleA - angleB) < 0.01);
-}
-
-// --- Dictionary-Daten: Vollständigkeit + Hamming-Distanz-Kontrolle -----------
-{
-  check('DICT_6X6_250_CODES hat genau 250 Einträge', DICT_6X6_250_CODES.length === 250);
-
-  function hamming(a, b) {
-    let x = a ^ 0, y = b ^ 0; // Platzhalter, echte Berechnung unten (36-Bit, kein Bitwise!)
-    return null;
-  }
-  // 36 Bit übersteigen sichere Bitwise-Operator-Grenzen -> Hamming-Distanz über
-  // Ganzzahl-Division/Modulo statt XOR+popcount berechnen.
-  function bits(v) {
-    const out = [];
-    let r = v;
-    for (let i = 0; i < 36; i++) { out.push(r % 2); r = Math.floor(r / 2); }
-    return out;
-  }
-  function hammingDist(a, b) {
-    const ba = bits(a), bb = bits(b);
-    let d = 0;
-    for (let i = 0; i < 36; i++) if (ba[i] !== bb[i]) d++;
-    return d;
-  }
-  let minDist = Infinity;
-  for (let i = 0; i < DICT_6X6_250_CODES.length; i++) {
-    for (let j = i + 1; j < DICT_6X6_250_CODES.length; j++) {
-      const d = hammingDist(DICT_6X6_250_CODES[i], DICT_6X6_250_CODES[j]);
-      if (d < minDist) minDist = d;
-    }
-  }
-  check('minimale Hamming-Distanz der 250 Codes ist exakt 11 (= OpenCVs dokumentierter Wert für DICT_6X6_250)', minDist === 11);
 }
 
 console.log(failures === 0 ? '\nAlle Tests bestanden.' : `\n${failures} Test(s) fehlgeschlagen.`);

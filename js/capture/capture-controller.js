@@ -71,6 +71,14 @@ export function initCaptureFlow(onMarkerData) {
   calibToggle.onclick = () => calibBox.classList.toggle('open');
 
   // --- Kamera + Schwerkraft starten ---------------------------------------
+  // opencv.js ist an dieser Stelle bereits fertig initialisiert (main.js wartet darauf,
+  // bevor initCaptureFlow überhaupt aufgerufen wird) - Auslöser jetzt freigeben und den
+  // anfänglichen "wird geladen"-Hinweis durch die eigentliche Anleitung ersetzen.
+  shutterBtn.disabled = false;
+  captureStatus.textContent =
+    'Beide ArUco-Marker ins Bild halten, ruhig halten, dann auslösen. Für mehr Genauigkeit ' +
+    'danach optional bis zu 2 weitere Fotos aus anderen Blickwinkeln.';
+
   startCamera(video)
     .then((stream) => {
       camStream = stream;

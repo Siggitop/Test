@@ -2,160 +2,113 @@
  * pose-estimation.js
  * -------------------
  * Berechnet aus den 4 Bildecken eines erkannten ArUco-Markers dessen Position und
- * Rotationsmatrix im Kamerakoordinatensystem.
+ * Rotationsmatrix im Kamerakoordinatensystem, über opencv.js: cv.solvePnP mit
+ * SOLVEPNP_IPPE_SQUARE (die für planare quadratische Marker vorgesehene Methode - löst
+ * die klassische Rotations-Mehrdeutigkeit auf, die eine einfache Homographie-Zerlegung
+ * nicht erkennt) + cv.Rodrigues zur Umwandlung des Rotationsvektors in eine Matrix.
  *
- * Methode: Homographie aus den 4 Punktkorrespondenzen (Direct Linear Transform) und
- * Zerlegung über die Kamera-Matrix K - ein Standardverfahren für planare Pose,
- * vergleichbar mit cv2.solvePnP(..., IPPE_SQUARE) für nahezu frontale Ansichten. Bei
- * sehr schrägen Aufnahmewinkeln ist es etwas ungenauer als echtes IPPE, für diesen Zweck
- * (Handyfoto von zwei Rohrenden aus vernünftiger Distanz) ausreichend.
- *
- * Gegen eine synthetische Ground Truth getestet (siehe /tests): Positionsfehler im
- * Rahmen der Fließkommagenauigkeit (~1e-16) im unverzeichneten Fall, und mit absichtlich
- * verzeichneten Testecken sinkt der Fehler durch die Entzerrung von ~1.6mm auf denselben
- * Wert - die Entzerrung korrigiert also tatsächlich das, wofür sie gedacht ist.
+ * Ersetzt die vorherige, selbstgebaute Homographie-Zerlegung (siehe Git-Historie für den
+ * alten Code) - gleiche Schnittstelle (poseFromCorners liefert weiterhin
+ * {position,xAxis,yAxis,zAxis}), sodass keine andere Datei angepasst werden musste.
  */
 
-import { matVec3, norm3, scl3, cross3, normalize3, symmetricOrthogonalize, gaussSolve } from './linalg.js';
+const OBJ_POINTS_CACHE = new Map(); // markerLength -> flaches [X,Y,Z]-Array (4 Punkte)
 
-/**
- * Löst die Homographie H (3x3, h33=1 fixiert) aus genau 4 Punktkorrespondenzen
- * (Objektebene Z=0 → Bildpixel) per Direct Linear Transform.
- *
- * @param {number[][]} objPts 4× [X,Y] in der Markerebene (Meter, Z=0 implizit)
- * @param {number[][]} imgPts 4× [u,v] in Bildpixeln, gleiche Reihenfolge wie objPts
- * @returns {number[][]|null} 3x3-Homographie, oder null bei singulärem System
- */
-export function solveHomography(objPts, imgPts) {
-  const A = [], b = [];
-  for (let i = 0; i < 4; i++) {
-    const [X, Y] = objPts[i], [u, v] = imgPts[i];
-    A.push([X, Y, 1, 0, 0, 0, -X * u, -Y * u]); b.push(u);
-    A.push([0, 0, 0, X, Y, 1, -X * v, -Y * v]); b.push(v);
+/** Objektpunkte der Markerebene (Z=0), TL/TR/BR/BL - identisch zur Ecken-Konvention aus
+ *  detection.js/OpenCV. Pro markerLength einmal berechnet und wiederverwendet. */
+function objectPoints(markerLength) {
+  if (!OBJ_POINTS_CACHE.has(markerLength)) {
+    const h = markerLength / 2;
+    OBJ_POINTS_CACHE.set(markerLength, [-h, h, 0, h, h, 0, h, -h, 0, -h, -h, 0]);
   }
-  const h = gaussSolve(A, b);
-  if (!h) return null;
-  return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], 1]];
+  return OBJ_POINTS_CACHE.get(markerLength);
 }
 
-/**
- * Entzerrt einen einzelnen Bildpunkt nach dem Standard-Brown-Conrady-Verzeichnungsmodell
- * (identisch zu OpenCVs internem Vorgehen in cv2.undistortPoints).
- *
- * Das Verzeichnungsmodell hat nur in Richtung "unverzeichnet → verzeichnet" eine
- * geschlossene Formel; die Umkehrung wird hier iterativ (Fixpunktiteration, 10 Schritte -
- * konvergiert für realistische Verzeichnungsstärken zuverlässig) gelöst.
- *
- * @param {number} u,v Bildpixel-Koordinaten (verzeichnet, wie von der Kamera geliefert)
- * @param {{fx,fy,cx,cy}} K Kamera-Matrix
- * @param {number[]} dist [k1,k2,p1,p2,k3] - bei allen Nullen (Standardfall ohne bekannte
- *   Verzeichnung) wird direkt (u,v) unverändert zurückgegeben, keine unnötige Rechnung.
- * @returns {{x:number,y:number}} entzerrte Pixel-Koordinaten
- */
-export function undistortPoint(u, v, K, dist) {
+function cameraMatrixMat(K) {
+  return cv.matFromArray(3, 3, cv.CV_64F, [K.fx, 0, K.cx, 0, K.fy, K.cy, 0, 0, 1]);
+}
+function distCoeffsMat(dist) {
   const [k1 = 0, k2 = 0, p1 = 0, p2 = 0, k3 = 0] = dist || [];
-  if (!k1 && !k2 && !p1 && !p2 && !k3) return { x: u, y: v };
-
-  let x = (u - K.cx) / K.fx, y = (v - K.cy) / K.fy;
-  const x0 = x, y0 = y;
-  for (let i = 0; i < 10; i++) {
-    const r2 = x * x + y * y;
-    const icdist = 1 / (1 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2);
-    const dx = 2 * p1 * x * y + p2 * (r2 + 2 * x * x);
-    const dy = p1 * (r2 + 2 * y * y) + 2 * p2 * x * y;
-    x = (x0 - dx) * icdist;
-    y = (y0 - dy) * icdist;
-  }
-  return { x: x * K.fx + K.cx, y: y * K.fy + K.cy };
+  return cv.matFromArray(5, 1, cv.CV_64F, [k1, k2, p1, p2, k3]);
 }
 
 /**
  * Schätzt Position + Rotationsmatrix eines Markers im Kamerakoordinatensystem aus seinen
  * 4 erkannten Bildecken.
  *
- * @param {Array<{x:number,y:number}>} corners 4 Bildecken, im Uhrzeigersinn beginnend
- *   oben-links (Konvention von OpenCV UND js-aruco2 - siehe detection.js)
+ * @param {Array<{x:number,y:number}>} corners 4 Bildecken, TL/TR/BR/BL (siehe detection.js)
  * @param {number} markerLength reale Kantenlänge des Markers in Metern
  * @param {{fx,fy,cx,cy}} K Kamera-Matrix
  * @param {number[]} [dist] Verzeichnungskoeffizienten [k1,k2,p1,p2,k3], optional
- * @returns {{position, xAxis, yAxis, zAxis}|null} je {x,y,z}, oder null bei singulärer
- *   Homographie (z.B. alle 4 Ecken (fast) kollinear erkannt - fehlerhafte Erkennung)
+ * @returns {{position, xAxis, yAxis, zAxis}|null} je {x,y,z}, oder null wenn solvePnP
+ *   keine Lösung findet (z.B. entartete/kollineare Ecken)
  */
 export function poseFromCorners(corners, markerLength, K, dist) {
-  const h = markerLength / 2;
-  // Reihenfolge deckungsgleich mit dem ursprünglichen Python/OpenCV-Skript (dessen
-  // solvePnP-Objektpunkte): TL=(-h,h) TR=(h,h) BR=(h,-h) BL=(-h,-h);
-  // corners[0..3] = TL,TR,BR,BL.
-  const objPts = [[-h, h], [h, h], [h, -h], [-h, -h]];
-  const imgPts = corners.map((c) => {
-    const u = undistortPoint(c.x, c.y, K, dist);
-    return [u.x, u.y];
-  });
-
-  const H = solveHomography(objPts, imgPts);
-  if (!H) return null;
-
-  const KinvA = 1 / K.fx, KinvE = 1 / K.fy, KinvC = -K.cx / K.fx, KinvF = -K.cy / K.fy;
-  const Kinv = [[KinvA, 0, KinvC], [0, KinvE, KinvF], [0, 0, 1]];
-  const h1 = [H[0][0], H[1][0], H[2][0]];
-  const h2 = [H[0][1], H[1][1], H[2][1]];
-  const h3 = [H[0][2], H[1][2], H[2][2]];
-  const kh1 = matVec3(Kinv, h1), kh2 = matVec3(Kinv, h2), kh3 = matVec3(Kinv, h3);
-
-  let lambda = 2 / (norm3(kh1) + norm3(kh2));
-  let r1 = scl3(kh1, lambda), r2 = scl3(kh2, lambda), t = scl3(kh3, lambda);
-  // Vorzeichen-Mehrdeutigkeit der Homographie auflösen: der Marker muss vor der Kamera
-  // liegen (positives Z in der OpenCV-Konvention, Z zeigt von der Kamera in die Szene).
-  if (t[2] < 0) {
-    lambda = -lambda;
-    r1 = scl3(kh1, lambda); r2 = scl3(kh2, lambda); t = scl3(kh3, lambda);
+  const objPts = cv.matFromArray(4, 1, cv.CV_32FC3, objectPoints(markerLength));
+  const imgPts = cv.matFromArray(4, 1, cv.CV_32FC2, corners.flatMap((c) => [c.x, c.y]));
+  const cameraMatrix = cameraMatrixMat(K);
+  const distCoeffs = distCoeffsMat(dist);
+  const rvec = new cv.Mat();
+  const tvec = new cv.Mat();
+  const R = new cv.Mat();
+  try {
+    const ok = cv.solvePnP(objPts, imgPts, cameraMatrix, distCoeffs, rvec, tvec, false, cv.SOLVEPNP_IPPE_SQUARE);
+    if (!ok) return null;
+    cv.Rodrigues(rvec, R);
+    // R.data64F ist zeilenweise [R00,R01,R02, R10,R11,R12, R20,R21,R22] - xAxis/yAxis/zAxis
+    // sind die SPALTEN von R (Marker-lokale Achsen, ins Kamerakoordinatensystem gedreht).
+    const r = R.data64F, t = tvec.data64F;
+    return {
+      position: { x: t[0], y: t[1], z: t[2] },
+      xAxis: { x: r[0], y: r[3], z: r[6] },
+      yAxis: { x: r[1], y: r[4], z: r[7] },
+      zAxis: { x: r[2], y: r[5], z: r[8] },
+    };
+  } finally {
+    objPts.delete(); imgPts.delete(); cameraMatrix.delete(); distCoeffs.delete();
+    rvec.delete(); tvec.delete(); R.delete();
   }
-
-  [r1, r2] = symmetricOrthogonalize(normalize3(r1), normalize3(r2));
-  const r3 = cross3(r1, r2);
-
-  return {
-    position: { x: t[0], y: t[1], z: t[2] },
-    xAxis: { x: r1[0], y: r1[1], z: r1[2] },
-    yAxis: { x: r2[0], y: r2[1], z: r2[2] },
-    zAxis: { x: r3[0], y: r3[1], z: r3[2] },
-  };
 }
 
 /**
  * RMS-Reprojektionsfehler (in Pixeln) der 4 Markerecken unter einer geschätzten Pose.
- * Reiner Lochkamera-Vergleich, keine erneute Verzeichnung nötig: poseFromCorners arbeitet
- * bereits in entzerrten Bildkoordinaten, hier wird also gegen dieselben entzerrten Ecken
- * verglichen wie beim Lösen der Homographie.
+ * Nutzt cv.projectPoints (übernimmt die Verzeichnung automatisch in Vorwärtsrichtung),
+ * verglichen direkt gegen die rohen (verzeichneten) erkannten Ecken - kein manuelles
+ * Entzerren mehr nötig.
  *
  * Dient der Mehrbild-Fusion (multi-view-fusion.js) als Qualitäts-/Gewichtungssignal pro
  * Aufnahme - je kleiner der Fehler, desto mehr Gewicht bekommt dieses Foto beim Fusionieren.
  *
  * @param {{position,xAxis,yAxis,zAxis}} pose geschätzte Marker-Pose (Kamerakoordinaten)
- * @param {Array<{x:number,y:number}>} corners 4 erkannte Bildecken (verzeichnet, wie roh
- *   von der Erkennung geliefert - wird hier intern entzerrt)
+ * @param {Array<{x:number,y:number}>} corners 4 erkannte Bildecken (roh, verzeichnet)
  * @param {number} markerLength reale Kantenlänge des Markers in Metern
  * @param {{fx,fy,cx,cy}} K Kamera-Matrix
  * @param {number[]} [dist] Verzeichnungskoeffizienten, optional
  * @returns {number} RMS-Fehler in Pixeln über alle 4 Ecken
  */
 export function reprojectionErrorRMS(pose, corners, markerLength, K, dist) {
-  const h = markerLength / 2;
-  const objPts = [[-h, h], [h, h], [h, -h], [-h, -h]];
-  const r1 = [pose.xAxis.x, pose.xAxis.y, pose.xAxis.z];
-  const r2 = [pose.yAxis.x, pose.yAxis.y, pose.yAxis.z];
-  const t = [pose.position.x, pose.position.y, pose.position.z];
-
-  let sumSq = 0;
-  for (let i = 0; i < 4; i++) {
-    const [X, Y] = objPts[i];
-    const px = r1[0] * X + r2[0] * Y + t[0];
-    const py = r1[1] * X + r2[1] * Y + t[1];
-    const pz = r1[2] * X + r2[2] * Y + t[2];
-    const u = K.fx * px / pz + K.cx;
-    const v = K.fy * py / pz + K.cy;
-    const det = undistortPoint(corners[i].x, corners[i].y, K, dist);
-    sumSq += (u - det.x) ** 2 + (v - det.y) ** 2;
+  const objPts = cv.matFromArray(4, 1, cv.CV_32FC3, objectPoints(markerLength));
+  const cameraMatrix = cameraMatrixMat(K);
+  const distCoeffs = distCoeffsMat(dist);
+  const R = cv.matFromArray(3, 3, cv.CV_64F, [
+    pose.xAxis.x, pose.yAxis.x, pose.zAxis.x,
+    pose.xAxis.y, pose.yAxis.y, pose.zAxis.y,
+    pose.xAxis.z, pose.yAxis.z, pose.zAxis.z,
+  ]);
+  const rvec = new cv.Mat();
+  const tvec = cv.matFromArray(3, 1, cv.CV_64F, [pose.position.x, pose.position.y, pose.position.z]);
+  const projected = new cv.Mat();
+  try {
+    cv.Rodrigues(R, rvec);
+    cv.projectPoints(objPts, rvec, tvec, cameraMatrix, distCoeffs, projected);
+    const p = projected.data32F;
+    let sumSq = 0;
+    for (let i = 0; i < 4; i++) {
+      sumSq += (p[i * 2] - corners[i].x) ** 2 + (p[i * 2 + 1] - corners[i].y) ** 2;
+    }
+    return Math.sqrt(sumSq / 4);
+  } finally {
+    objPts.delete(); cameraMatrix.delete(); distCoeffs.delete(); R.delete();
+    rvec.delete(); tvec.delete(); projected.delete();
   }
-  return Math.sqrt(sumSq / 4);
 }

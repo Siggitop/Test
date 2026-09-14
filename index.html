@@ -53,8 +53,8 @@
  </div>
 
  <div id="captureBottom">
-  <div id="captureStatus">Beide ArUco-Marker ins Bild halten, ruhig halten, dann auslösen. Für mehr Genauigkeit danach optional bis zu 2 weitere Fotos aus anderen Blickwinkeln.</div>
-  <button id="shutter" aria-label="Foto aufnehmen"></button>
+  <div id="captureStatus">Bilderkennung wird geladen …</div>
+  <button id="shutter" aria-label="Foto aufnehmen" disabled></button>
   <button id="demoLink">Demo-Daten laden (ohne Kamera testen)</button>
  </div>
 </div>
@@ -107,13 +107,12 @@
 
 <!-- ============================== Skripte ============================== -->
 
-<!-- js-aruco2: reine JS-Portierung der ArUco-Erkennung, läuft komplett im Browser.
-     cv.js MUSS vor aruco.js geladen werden (aruco.js greift beim Laden auf das globale
-     CV-Objekt zu). Beide als klassische (nicht type=module) Scripts, damit sie vor dem
-     folgenden Modul-Script ausgeführt sind und AR/CV global verfügbar machen -
-     js/vision/aruco-setup.js baut direkt auf diesem globalen AR-Objekt auf. -->
-<script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/aruco.js"></script>
+<!-- opencv.js (selbst gehostet, ~11MB): enthält bereits das komplette ArUco/objdetect-
+     Modul (seit OpenCV 4.7 kein separates contrib-Modul mehr nötig), inkl. Sub-Pixel-
+     Eckenverfeinerung und solvePnP. Klassisches (nicht type=module) Script, damit es vor
+     dem folgenden Modul-Script ausgeführt ist und das globale `cv`-Objekt verfügbar
+     macht - js/vision/opencv-ready.js kapselt das Warten auf die (asynchrone) WASM-Init. -->
+<script src="assets/opencv.js"></script>
 
 <script type="importmap">
 {

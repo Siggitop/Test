@@ -31,23 +31,29 @@
  */
 
 import { gaussSolve } from '../vision/linalg.js';
-import { getMarkerBits } from '../vision/aruco-setup.js';
 
 export const CHARUCO_COLS = 4;
 export const CHARUCO_ROWS = 3;
 export const CHARUCO_COUNT = CHARUCO_COLS * CHARUCO_ROWS; // Marker-IDs 0..11
 
-/** Zeichnet einen einzelnen ArUco-Marker (schwarzer Rand + 6x6-Codefeld) auf ein Canvas. */
+/**
+ * Zeichnet einen einzelnen ArUco-Marker (DICT_6X6_250, inkl. schwarzem Rand) auf ein
+ * Canvas - über opencv.js' eigene Markergenerierung (cv.aruco_Dictionary), statt die
+ * Bitmuster wie zuvor von Hand nachzubilden.
+ */
 function drawArucoMarkerCell(ctx, x, y, size, id) {
-  const bits = getMarkerBits(id);
-  const cell = size / 8; // 6x6 Code + 1 Zelle schwarzer Rand rundum = 8x8 Raster
-  ctx.fillStyle = '#000';
-  ctx.fillRect(x, y, size, size);
-  ctx.fillStyle = '#fff';
-  for (let r = 0; r < 6; r++) {
-    for (let c = 0; c < 6; c++) {
-      if (bits[r * 6 + c] === 1) ctx.fillRect(x + (c + 1) * cell, y + (r + 1) * cell, cell, cell);
-    }
+  const dict = cv.getPredefinedDictionary(cv.DICT_6X6_250);
+  const markerMat = new cv.Mat();
+  const off = document.createElement('canvas');
+  try {
+    dict.generateImageMarker(id, Math.round(size), markerMat, 1);
+    off.width = markerMat.cols;
+    off.height = markerMat.rows;
+    cv.imshow(off, markerMat);
+    ctx.drawImage(off, x, y, size, size);
+  } finally {
+    markerMat.delete();
+    dict.delete();
   }
 }
 
