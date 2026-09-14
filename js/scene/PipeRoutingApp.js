@@ -394,13 +394,15 @@ export class PipeRoutingApp {
     const enterMeasuring = () => {
       this.measuring = true;
       this.measurePoints = [];
+      this._measureDownPos = null;
       this._clearMeasurement();
       toggleMeasureBtn.classList.add('active');
-      hintEl.textContent = 'Messen: zwei Punkte am Modell antippen - zeigt den Versatz in X/Y/Z';
+      hintEl.textContent = 'Messen: Punkte antippen (Linienzug) - zeigt je Teilstrecke den Versatz in X/Y/Z · zum Neustart nochmal auf "Messen" klicken';
     };
     const exitMeasuring = () => {
       this.measuring = false;
       this.measurePoints = [];
+      this._measureDownPos = null;
       this._clearMeasurement();
       toggleMeasureBtn.classList.remove('active');
       hintEl.textContent = this._defaultHint;
@@ -429,16 +431,14 @@ export class PipeRoutingApp {
   }
 
   /**
-   * Zeichnet die Strecke zwischen zwei Messpunkten NICHT als direkte/diagonale Linie,
-   * sondern als "Treppe" aus bis zu 3 achsenparallelen Teilstrecken (erst X, dann Y, dann
-   * Z) - jede einzeln beschriftet. Das entspricht, wie am Bau tatsächlich gemessen wird
-   * (Versatz je Richtung), nicht der Luftlinie zwischen den Punkten.
+   * Zeichnet die Strecke zwischen zwei aufeinanderfolgenden Messpunkten eines Linienzugs
+   * NICHT als direkte/diagonale Linie, sondern als "Treppe" aus bis zu 3 achsenparallelen
+   * Teilstrecken (erst X, dann Y, dann Z) - jede einzeln beschriftet. Entspricht, wie am
+   * Bau tatsächlich gemessen wird (Versatz je Richtung), nicht der Luftlinie. Fügt der
+   * bestehenden measureGroup nur hinzu (löscht nichts) - ein Linienzug kann so aus
+   * beliebig vielen Teilstrecken bestehen.
    */
-  _updateMeasurementVisual(p1, p2) {
-    this._clearMeasurement();
-    this._addMeasureDot(p1);
-    this._addMeasureDot(p2);
-
+  _addMeasurementSegment(p1, p2) {
     const corner1 = new THREE.Vector3(p2.x, p1.y, p1.z);
     const corner2 = new THREE.Vector3(p2.x, p2.y, p1.z);
     const segments = [
@@ -480,6 +480,10 @@ export class PipeRoutingApp {
     // sich bei genau 2 Fingern der Abstand zwischen ihnen verfolgen lässt.
     this._activePointers = new Map();
     this._pinchLastDist = null;
+    // Merkt sich beim Messen die Position des pointerdown, um am pointerup zu erkennen,
+    // ob es ein Tippen (Messpunkt setzen) oder ein Ziehen (Kamera drehen) war.
+    this._measureDownPos = null;
+    const MEASURE_CLICK_MAX_MOVE = 6; // Pixel
 
     const pick = (e) => {
       // THREE.Raycaster prüft .visible NICHT selbst - bei ausgeblendetem Gizmo würden
@@ -538,18 +542,11 @@ export class PipeRoutingApp {
 
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (this.measuring && (e.pointerType === 'touch' || e.button === 0)) {
-        const p = pickMeasurePoint(e);
-        if (p) {
-          if (this.measurePoints.length >= 2) this.measurePoints = [];
-          this.measurePoints.push(p);
-          if (this.measurePoints.length === 2) {
-            this._updateMeasurementVisual(this.measurePoints[0], this.measurePoints[1]);
-          } else {
-            this._clearMeasurement();
-            this._addMeasureDot(p);
-          }
-        }
-        return; // im Messmodus keine Routing-/Schwenk-/Zoom-Interaktion parallel
+        // Messpunkt wird erst am pointerup gesetzt (siehe endTouch) - so bleibt Orbit
+        // (Kamera drehen per Ziehen) auch im Messmodus möglich, statt jeden Drag-Start
+        // sofort als Messpunkt misszuverstehen.
+        this._measureDownPos = { x: e.clientX, y: e.clientY };
+        return; // im Messmodus keine Routing-Interaktion parallel
       }
       if (e.pointerType === 'touch') {
         this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -584,8 +581,30 @@ export class PipeRoutingApp {
         this.renderer.domElement.releasePointerCapture(e.pointerId);
       }
     };
-    this.renderer.domElement.addEventListener('pointerup', endTouch);
-    this.renderer.domElement.addEventListener('pointercancel', endTouch);
+    this.renderer.domElement.addEventListener('pointerup', (e) => {
+      if (this.measuring && this._measureDownPos) {
+        const moved = Math.hypot(e.clientX - this._measureDownPos.x, e.clientY - this._measureDownPos.y);
+        this._measureDownPos = null;
+        // Nur bei einem echten Tippen (kaum Bewegung) einen Messpunkt setzen - bei mehr
+        // Bewegung wollte der Nutzer die Kamera drehen (Orbit läuft parallel weiter, da
+        // controls.enabled im Messmodus nie angetastet wird).
+        if (moved <= MEASURE_CLICK_MAX_MOVE) {
+          const p = pickMeasurePoint(e);
+          if (p) {
+            const prev = this.measurePoints[this.measurePoints.length - 1] || null;
+            this.measurePoints.push(p);
+            this._addMeasureDot(p);
+            if (prev) this._addMeasurementSegment(prev, p);
+          }
+        }
+        return;
+      }
+      endTouch(e);
+    });
+    this.renderer.domElement.addEventListener('pointercancel', (e) => {
+      this._measureDownPos = null;
+      endTouch(e);
+    });
     this.renderer.domElement.addEventListener('pointermove', (e) => {
       if (e.pointerType === 'touch' && this._activePointers.has(e.pointerId)) {
         this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
