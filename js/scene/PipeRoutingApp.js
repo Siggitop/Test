@@ -50,6 +50,20 @@ function classifyTurn(oldDir, newDir) {
   return 'b90';
 }
 
+/** Vertikales FOV (Grad) für THREE.PerspectiveCamera, das der echten Aufnahmekamera
+ *  entspricht - unabhängig davon, ob das Browserfenster (canvasAspect) ein anderes
+ *  Seitenverhältnis hat als das Kalibrierfoto (K.imageWidth × K.imageHeight). Analog zu
+ *  CSS "object-fit: cover": die enger passende Achse wird exakt physikalisch korrekt
+ *  abgebildet, die andere zeigt entsprechend mehr/weniger vom Bild statt zu verzerren. */
+function calibratedVerticalFov(K, canvasAspect) {
+  const photoAspect = K.imageWidth / K.imageHeight;
+  if (canvasAspect > photoAspect) {
+    return THREE.MathUtils.radToDeg(2 * Math.atan(K.imageHeight / (2 * K.fy)));
+  }
+  const hFov = 2 * Math.atan(K.imageWidth / (2 * K.fx));
+  return THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hFov / 2) / canvasAspect));
+}
+
 export class PipeRoutingApp {
   /**
    * @param {HTMLElement} container Element, in das der WebGL-Canvas eingehängt wird
@@ -60,6 +74,9 @@ export class PipeRoutingApp {
     this.markerB = readMarker(markerData.markerB);
     this.markerDist = this.markerA.position.distanceTo(this.markerB.position) || 1;
     this.UNIT = this.markerDist;
+    // Nur vorhanden, wenn per echtem Foto (nicht Demo-Daten) erfasst und wenn die
+    // Kalibrierung Bildmaße mitliefert - siehe capture-controller.js.
+    this.calibK = (markerData.K && markerData.K.imageWidth && markerData.K.imageHeight) ? markerData.K : null;
 
     this._computeConstants();
     this._setupRenderer(container);
@@ -318,6 +335,11 @@ export class PipeRoutingApp {
     this._savedCamPos = new THREE.Vector3();
     this._savedCamQuat = new THREE.Quaternion();
     this._savedTarget = new THREE.Vector3();
+    this._savedFov = this.camera.fov;
+    // Blickrichtung in der Kamerasicht (Yaw/Pitch relativ zur Original-Kameraausrichtung,
+    // also relativ zur Identity-Quaternion) - siehe _wirePickInteraction fürs Schwenken.
+    this._camViewYaw = 0;
+    this._camViewPitch = 0;
     const toggleCamViewBtn = document.getElementById('toggleCamView');
     toggleCamViewBtn.onclick = () => {
       this.inCameraView = !this.inCameraView;
@@ -329,14 +351,22 @@ export class PipeRoutingApp {
         this._savedTarget.copy(this.controls.target);
         this.camera.position.set(0, 0, 0);
         this.camera.up.set(0, 1, 0);
+        this._camViewYaw = 0;
+        this._camViewPitch = 0;
         this.camera.quaternion.identity();
         this.camera.updateMatrixWorld();
         this.controls.enabled = false;
-        hintEl.textContent = 'Original-Kamera-Perspektive · Orbit deaktiviert · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
+        if (this.calibK) {
+          this.camera.fov = calibratedVerticalFov(this.calibK, this.camera.aspect);
+          this.camera.updateProjectionMatrix();
+        }
+        hintEl.textContent = 'Original-Kamera-Perspektive · Ziehen zum Schwenken · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
       } else {
         this.camera.position.copy(this._savedCamPos);
         this.camera.quaternion.copy(this._savedCamQuat);
         this.controls.target.copy(this._savedTarget);
+        this.camera.fov = this._savedFov;
+        this.camera.updateProjectionMatrix();
         this.controls.enabled = true;
         this.controls.update();
         hintEl.textContent = 'Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
@@ -352,6 +382,8 @@ export class PipeRoutingApp {
     this.ray = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
     this.draggingRoute = false;
+    this._lookDragging = false;
+    this._lookLast = { x: 0, y: 0 };
 
     const pick = (e) => {
       // THREE.Raycaster prüft .visible NICHT selbst - bei ausgeblendetem Gizmo würden
@@ -367,16 +399,44 @@ export class PipeRoutingApp {
       return hit?.object.userData.dir || null;
     };
 
+    // Schwenken in der Kamerasicht: OrbitControls ist dort komplett deaktiviert (sie
+    // würde die Kamera vom fixen Aufnahmepunkt wegbewegen), daher hier eine einfache
+    // eigene "Blick drehen, Position fest"-Steuerung wie bei einem Kugelpanorama.
+    const applyLook = (dx, dy) => {
+      const LOOK_SPEED = 0.005; // rad pro Pixel
+      this._camViewYaw -= dx * LOOK_SPEED;
+      this._camViewPitch = THREE.MathUtils.clamp(
+        this._camViewPitch - dy * LOOK_SPEED, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01
+      );
+      this.camera.quaternion.setFromEuler(new THREE.Euler(this._camViewPitch, this._camViewYaw, 0, 'YXZ'));
+    };
+
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
       if (e.pointerType === 'touch' || e.button === 0) {
         const d = pick(e);
-        if (d) { this.draggingRoute = true; this._setControlsEnabled(false); this.addSegment(d); }
+        if (d) {
+          this.draggingRoute = true; this._setControlsEnabled(false); this.addSegment(d);
+        } else if (this.inCameraView) {
+          this._lookDragging = true;
+          this._lookLast.x = e.clientX; this._lookLast.y = e.clientY;
+          this.renderer.domElement.setPointerCapture(e.pointerId);
+        }
       }
     });
-    this.renderer.domElement.addEventListener('pointerup', () => {
-      this.draggingRoute = false; this._setControlsEnabled(true);
+    this.renderer.domElement.addEventListener('pointerup', (e) => {
+      this.draggingRoute = false;
+      this._setControlsEnabled(true);
+      if (this._lookDragging) {
+        this._lookDragging = false;
+        this.renderer.domElement.releasePointerCapture(e.pointerId);
+      }
     });
     this.renderer.domElement.addEventListener('pointermove', (e) => {
+      if (this._lookDragging) {
+        applyLook(e.clientX - this._lookLast.x, e.clientY - this._lookLast.y);
+        this._lookLast.x = e.clientX; this._lookLast.y = e.clientY;
+        return;
+      }
       if (!this.draggingRoute) return;
       const d = pick(e);
       if (d) { this.addSegment(d); this.draggingRoute = false; this._setControlsEnabled(true); }
@@ -387,6 +447,9 @@ export class PipeRoutingApp {
 
   _onResize() {
     this.camera.aspect = innerWidth / innerHeight;
+    if (this.inCameraView && this.calibK) {
+      this.camera.fov = calibratedVerticalFov(this.calibK, this.camera.aspect);
+    }
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
   }

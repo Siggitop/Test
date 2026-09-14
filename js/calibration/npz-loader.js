@@ -72,8 +72,13 @@ function toArrayBuffer(u8) {
 /**
  * Lädt eine camera_calib.npz-Datei und extrahiert Kamera-Matrix + Verzeichnung.
  *
- * @param {File} file vom <input type="file"> Element
- * @returns {Promise<{fx:number,fy:number,cx:number,cy:number,dist:number[],hasDist:boolean}>}
+ * @param {File|Blob} file vom <input type="file"> Element (oder ein per fetch() geladener
+ *   Blob für eine mitgelieferte Standard-Kalibrierung - beide haben .arrayBuffer())
+ * @returns {Promise<{fx:number,fy:number,cx:number,cy:number,dist:number[],hasDist:boolean,
+ *   imageWidth?:number,imageHeight?:number}>} imageWidth/imageHeight sind nur gesetzt, wenn
+ *   das Kalibrierskript sie mitgespeichert hat (np.savez(..., image_width=w, image_height=h))
+ *   - sie erlauben es, fx/fy/cx/cy beim Einsatz an eine abweichende Kamera-Stream-Auflösung
+ *   anzupassen (siehe capture-controller.js).
  * @throws {Error} mit einer für den Nutzer verständlichen deutschen Fehlermeldung
  */
 export async function loadCalibrationNpz(file) {
@@ -82,6 +87,8 @@ export async function loadCalibrationNpz(file) {
 
   const kEntry = Object.keys(zip).find((n) => /(^|\/)K\.npy$/i.test(n));
   const distEntry = Object.keys(zip).find((n) => /(^|\/)dist\.npy$/i.test(n));
+  const widthEntry = Object.keys(zip).find((n) => /(^|\/)image_width\.npy$/i.test(n));
+  const heightEntry = Object.keys(zip).find((n) => /(^|\/)image_height\.npy$/i.test(n));
   if (!kEntry) {
     throw new Error(`kein "K.npy" im Archiv gefunden (enthalten: ${Object.keys(zip).join(', ')})`);
   }
@@ -100,5 +107,9 @@ export async function loadCalibrationNpz(file) {
     hasDist = true;
   }
 
-  return { fx, fy, cx, cy, dist, hasDist };
+  let imageWidth, imageHeight;
+  if (widthEntry) imageWidth = parseNpy(toArrayBuffer(zip[widthEntry])).data[0];
+  if (heightEntry) imageHeight = parseNpy(toArrayBuffer(zip[heightEntry])).data[0];
+
+  return { fx, fy, cx, cy, dist, hasDist, imageWidth, imageHeight };
 }

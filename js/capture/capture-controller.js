@@ -66,6 +66,7 @@ export function initCaptureFlow(onMarkerData) {
       video.addEventListener('loadedmetadata', () => {
         const K = estimateK(video.videoWidth, video.videoHeight);
         setCalibFields(K.fx, K.fy, K.cx, K.cy);
+        loadDefaultCalibration();
       }, { once: true });
     })
     .catch((err) => {
@@ -91,7 +92,51 @@ export function initCaptureFlow(onMarkerData) {
       fy: parseFloat(calFy.value) || video.videoWidth || 1000,
       cx: parseFloat(calCx.value) || (video.videoWidth || 0) / 2,
       cy: parseFloat(calCy.value) || (video.videoHeight || 0) / 2,
+      imageWidth: video.videoWidth || 0,
+      imageHeight: video.videoHeight || 0,
     };
+  }
+
+  /**
+   * Übernimmt eine geladene .npz-Kalibrierung (Datei-Upload oder mitgelieferte
+   * Standard-Datei) in die Kalibrierfelder. Die K.npy-Werte stammen typischerweise von
+   * separaten, in voller Auflösung aufgenommenen Kalibrierfotos (z.B. 3024×4032) - der
+   * Kamerastream hier läuft aber meist in einer anderen Auflösung (z.B. 1920×1080).
+   * fx/fy/cx/cy sind Pixelgrößen und müssen deshalb proportional auf die tatsächliche
+   * Stream-Auflösung skaliert werden, sonst stimmen Pose-Berechnung und (davon abgeleitet)
+   * die Kamerasicht-Perspektive nicht mit der Realität überein.
+   */
+  function applyCalibration({ fx, fy, cx, cy, dist, hasDist, imageWidth, imageHeight }) {
+    if (imageWidth && imageHeight && video.videoWidth && video.videoHeight) {
+      const sx = video.videoWidth / imageWidth;
+      const sy = video.videoHeight / imageHeight;
+      if (Math.abs(sx / sy - 1) > 0.15) {
+        console.warn(
+          `Kalibrierung: Seitenverhältnis der Kalibrierfotos (${imageWidth}×${imageHeight}) weicht ` +
+          `deutlich vom Kamerastream (${video.videoWidth}×${video.videoHeight}) ab - Skalierung evtl. ungenau.`
+        );
+      }
+      fx *= sx; cx *= sx;
+      fy *= sy; cy *= sy;
+    }
+    setCalibFields(fx, fy, cx, cy);
+    calibDist = dist;
+    return { fx, fy, cx, cy, hasDist };
+  }
+
+  /** Lädt beim Start automatisch assets/default-calib.npz, falls vorhanden - so ist die
+   *  App direkt mit einer echten Kalibrierung nutzbar, ohne dass die Datei jedes Mal von
+   *  Hand ausgewählt werden muss. Eine manuelle Auswahl (Tab ".npz") überschreibt das
+   *  danach jederzeit wieder. */
+  function loadDefaultCalibration() {
+    fetch('assets/default-calib.npz')
+      .then((r) => (r.ok ? r.blob() : Promise.reject()))
+      .then((blob) => loadCalibrationNpz(blob))
+      .then((loaded) => {
+        const { hasDist } = applyCalibration(loaded);
+        showCalibSummary('Aktive Kalibrierung: Standard-.npz' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ''));
+      })
+      .catch(() => {}); // keine mitgelieferte Standard-Kalibrierung -> grobe Schätzung bleibt aktiv
   }
 
   // --- Kalibrierungs-Tabs ---------------------------------------------------
@@ -119,9 +164,8 @@ export function initCaptureFlow(onMarkerData) {
     const statusEl = document.getElementById('npzStatus');
     if (!file) return;
     try {
-      const { fx, fy, cx, cy, dist, hasDist } = await loadCalibrationNpz(file);
-      setCalibFields(fx, fy, cx, cy);
-      calibDist = dist;
+      const loaded = await loadCalibrationNpz(file);
+      const { fx, fy, cx, cy, hasDist } = applyCalibration(loaded);
       statusEl.innerHTML = `<span style="color:#7be0b0">✓ geladen: fx=${fx.toFixed(1)} fy=${fy.toFixed(1)} cx=${cx.toFixed(1)} cy=${cy.toFixed(1)}${hasDist ? ' · Verzeichnung inklusive' : ' · keine Verzeichnung in der Datei gefunden'}</span>`;
       showCalibSummary('Aktive Kalibrierung: .npz-Datei' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ''));
     } catch (err) {
@@ -203,6 +247,7 @@ export function initCaptureFlow(onMarkerData) {
       coordinateSystem: { origin: 'camera', unit: 'meter' },
       markerA: { id: mA.id, ...poseA },
       markerB: { id: mB.id, ...poseB },
+      K,
     };
     if (gravityDown) markerData.gravityDown = gravityDown;
 
