@@ -14,7 +14,6 @@
  */
 
 import * as THREE from 'three';
-import { createLabelSprite } from './geometry-helpers.js';
 
 /**
  * Loggt (nur zur Information, keine sichtbare Auswirkung) wie gut beide Marker-X-Achsen
@@ -45,14 +44,14 @@ function logMarkerPlaneConsistency(markerA, markerB) {
  * @param {THREE.Vector3} midAB Mittelpunkt zwischen beiden Markern
  * @param {number} markerDist Abstand A-B in Metern (für die Ebenengröße)
  * @param {number} unit Referenzgröße für Beschriftungshöhe
- * @returns {{usedGravity:boolean, tableNormal:THREE.Vector3|null}}
+ * @returns {{usedGravity:boolean, tableNormal:THREE.Vector3|null, planeMesh:THREE.Mesh|null}}
  */
 export function setupHorizontalPlane(scene, markerA, markerB, gravityDownCv, cvToThree, midAB, markerDist, unit) {
   logMarkerPlaneConsistency(markerA, markerB);
 
   if (!gravityDownCv) {
     console.log('Keine horizontale Referenzebene angezeigt: kein Schwerkraftvektor vorhanden (Sensor bei der Aufnahme nicht verfügbar/erlaubt).');
-    return { usedGravity: false, tableNormal: null };
+    return { usedGravity: false, tableNormal: null, planeMesh: null };
   }
 
   const tableNormal = cvToThree(gravityDownCv).normalize();
@@ -81,13 +80,7 @@ export function setupHorizontalPlane(scene, markerA, markerB, gravityDownCv, cvT
   plane.position.copy(planeCenter);
   scene.add(plane);
 
-  const label = createLabelSprite('Horizontale (Schwerkraft)', '#8a5a12', unit * 0.22);
-  // Minimal in Richtung "oben" (-tableNormal) versetzt, damit das Label nicht exakt in
-  // der Gitterebene liegt (Z-Fighting) und leicht darüber schwebt statt dahinter zu liegen.
-  label.position.copy(planeCenter).addScaledVector(tableNormal, -planeSize * 0.02);
-  scene.add(label);
-
-  return { usedGravity: true, tableNormal };
+  return { usedGravity: true, tableNormal, planeMesh: plane };
 }
 
 /**

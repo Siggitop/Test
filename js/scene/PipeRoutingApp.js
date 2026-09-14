@@ -19,7 +19,7 @@ import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.180.0/exampl
 
 import {
   createCylinderMesh, createElbowMesh, createFadingStub, createMarkerVisual,
-  perpDirs, colorForDirection, CARDINALS,
+  perpDirs, colorForDirection, CARDINALS, createLabelSprite,
 } from './geometry-helpers.js';
 import { setupHorizontalPlane, logPipeAxisAnglesToGravity } from './horizontal-plane.js';
 import { tryAutoRoute } from './auto-route.js';
@@ -132,6 +132,7 @@ export class PipeRoutingApp {
     this.pipes = new THREE.Group(); this.scene.add(this.pipes);
     this.joints = new THREE.Group(); this.scene.add(this.joints);
     this.markersGroup = new THREE.Group(); this.scene.add(this.markersGroup);
+    this.measureGroup = new THREE.Group(); this.scene.add(this.measureGroup);
     // Gizmo (Routing-Griffe) startet ausgeblendet, um den Blick auf die Rohre frei zu
     // halten - wird bei Bedarf über den Knopf oben eingeblendet.
     this.joints.visible = false;
@@ -148,11 +149,12 @@ export class PipeRoutingApp {
     this.controls.maxDistance = markerDist * 30;
     this.controls.update();
 
-    const { usedGravity, tableNormal } = setupHorizontalPlane(
+    const { usedGravity, tableNormal, planeMesh } = setupHorizontalPlane(
       this.scene, markerA, markerB, markerData.gravityDown ?? null, cvToThree, this.midAB, markerDist, UNIT
     );
     this.usedGravity = usedGravity;
     this.tableNormal = tableNormal;
+    this.horizontalPlaneMesh = planeMesh;
 
     document.getElementById('markerInfo').textContent =
       `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist * 100).toFixed(1)} cm` +
@@ -331,6 +333,8 @@ export class PipeRoutingApp {
       togglePanelBtn.classList.toggle('active', visible);
     };
 
+    this._defaultHint = 'Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
+
     this.inCameraView = false;
     this._savedCamPos = new THREE.Vector3();
     this._savedCamQuat = new THREE.Quaternion();
@@ -341,39 +345,125 @@ export class PipeRoutingApp {
     this._camViewYaw = 0;
     this._camViewPitch = 0;
     const toggleCamViewBtn = document.getElementById('toggleCamView');
-    toggleCamViewBtn.onclick = () => {
-      this.inCameraView = !this.inCameraView;
-      toggleCamViewBtn.classList.toggle('active', this.inCameraView);
-      const hintEl = document.getElementById('hint');
-      if (this.inCameraView) {
-        this._savedCamPos.copy(this.camera.position);
-        this._savedCamQuat.copy(this.camera.quaternion);
-        this._savedTarget.copy(this.controls.target);
-        this.camera.position.set(0, 0, 0);
-        this.camera.up.set(0, 1, 0);
-        this._camViewYaw = 0;
-        this._camViewPitch = 0;
-        this.camera.quaternion.identity();
-        this.camera.updateMatrixWorld();
-        this.controls.enabled = false;
-        if (this.calibK) {
-          this.camera.fov = calibratedVerticalFov(this.calibK, this.camera.aspect);
-          this.camera.updateProjectionMatrix();
-        }
-        this._pinchLastDist = null;
-        this._activePointers.clear();
-        hintEl.textContent = 'Original-Kamera-Perspektive · Ziehen zum Schwenken · Scrollen/Kneifen zum Zoomen · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
-      } else {
-        this.camera.position.copy(this._savedCamPos);
-        this.camera.quaternion.copy(this._savedCamQuat);
-        this.controls.target.copy(this._savedTarget);
-        this.camera.fov = this._savedFov;
+    const hintEl = document.getElementById('hint');
+    const enterCameraView = () => {
+      this.inCameraView = true;
+      toggleCamViewBtn.classList.add('active');
+      this._savedCamPos.copy(this.camera.position);
+      this._savedCamQuat.copy(this.camera.quaternion);
+      this._savedTarget.copy(this.controls.target);
+      this.camera.position.set(0, 0, 0);
+      this.camera.up.set(0, 1, 0);
+      this._camViewYaw = 0;
+      this._camViewPitch = 0;
+      this.camera.quaternion.identity();
+      this.camera.updateMatrixWorld();
+      this.controls.enabled = false;
+      if (this.calibK) {
+        this.camera.fov = calibratedVerticalFov(this.calibK, this.camera.aspect);
         this.camera.updateProjectionMatrix();
-        this.controls.enabled = true;
-        this.controls.update();
-        hintEl.textContent = 'Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
       }
+      this._pinchLastDist = null;
+      this._activePointers.clear();
+      hintEl.textContent = 'Original-Kamera-Perspektive · Ziehen zum Schwenken · Scrollen/Kneifen zum Zoomen · zum Zurücksetzen nochmal auf "Kamera-Sicht" klicken';
     };
+    const exitCameraView = () => {
+      this.inCameraView = false;
+      toggleCamViewBtn.classList.remove('active');
+      this.camera.position.copy(this._savedCamPos);
+      this.camera.quaternion.copy(this._savedCamQuat);
+      this.controls.target.copy(this._savedTarget);
+      this.camera.fov = this._savedFov;
+      this.camera.updateProjectionMatrix();
+      this.controls.enabled = true;
+      this.controls.update();
+      hintEl.textContent = this._defaultHint;
+    };
+    toggleCamViewBtn.onclick = () => {
+      if (this.inCameraView) { exitCameraView(); return; }
+      if (this.measuring) exitMeasuring();
+      enterCameraView();
+    };
+
+    // -- Messen: Abstand zwischen zwei angetippten Punkten, immer als orthogonale
+    // Versatz-Strecken entlang der Bezugsachsen X/Y/Z (nie als direkte/diagonale Distanz) -
+    // siehe _wirePickInteraction für die Punktauswahl per Klick/Tap.
+    this.measuring = false;
+    this.measurePoints = [];
+    const toggleMeasureBtn = document.getElementById('toggleMeasure');
+    const enterMeasuring = () => {
+      this.measuring = true;
+      this.measurePoints = [];
+      this._clearMeasurement();
+      toggleMeasureBtn.classList.add('active');
+      hintEl.textContent = 'Messen: zwei Punkte am Modell antippen - zeigt den Versatz in X/Y/Z';
+    };
+    const exitMeasuring = () => {
+      this.measuring = false;
+      this.measurePoints = [];
+      this._clearMeasurement();
+      toggleMeasureBtn.classList.remove('active');
+      hintEl.textContent = this._defaultHint;
+    };
+    toggleMeasureBtn.onclick = () => {
+      if (this.measuring) { exitMeasuring(); return; }
+      if (this.inCameraView) exitCameraView();
+      enterMeasuring();
+    };
+  }
+
+  /** Entfernt alle bisher gezeichneten Mess-Hilfslinien/-Punkte/-Labels. */
+  _clearMeasurement() {
+    this.measureGroup.clear();
+  }
+
+  /** Kleiner weißer Punkt zur Bestätigung eines gewählten Messpunkts. */
+  _addMeasureDot(p) {
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(this.MARKER_R * 0.5, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false })
+    );
+    dot.position.copy(p);
+    dot.renderOrder = 10;
+    this.measureGroup.add(dot);
+  }
+
+  /**
+   * Zeichnet die Strecke zwischen zwei Messpunkten NICHT als direkte/diagonale Linie,
+   * sondern als "Treppe" aus bis zu 3 achsenparallelen Teilstrecken (erst X, dann Y, dann
+   * Z) - jede einzeln beschriftet. Das entspricht, wie am Bau tatsächlich gemessen wird
+   * (Versatz je Richtung), nicht der Luftlinie zwischen den Punkten.
+   */
+  _updateMeasurementVisual(p1, p2) {
+    this._clearMeasurement();
+    this._addMeasureDot(p1);
+    this._addMeasureDot(p2);
+
+    const corner1 = new THREE.Vector3(p2.x, p1.y, p1.z);
+    const corner2 = new THREE.Vector3(p2.x, p2.y, p1.z);
+    const segments = [
+      { a: p1, b: corner1, axis: 'X', color: 0xd23c3c },
+      { a: corner1, b: corner2, axis: 'Y', color: 0x1f9d52 },
+      { a: corner2, b: p2, axis: 'Z', color: 0x2468e8 },
+    ];
+
+    segments.forEach(({ a, b, axis, color }) => {
+      const len = a.distanceTo(b);
+      if (len < 1e-4) return; // keine Komponente in dieser Achse - nichts zu zeichnen/beschriften
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([a, b]),
+        new THREE.LineDashedMaterial({ color, dashSize: this.UNIT * 0.025, gapSize: this.UNIT * 0.015, depthTest: false })
+      );
+      line.computeLineDistances();
+      line.renderOrder = 10;
+      this.measureGroup.add(line);
+
+      const hex = '#' + color.toString(16).padStart(6, '0');
+      const label = createLabelSprite(`Δ${axis} ${(len * 100).toFixed(1)} cm`, hex, this.UNIT * 0.14);
+      label.position.copy(a).lerp(b, 0.5);
+      label.renderOrder = 11;
+      this.measureGroup.add(label);
+    });
   }
 
   _setControlsEnabled(en) {
@@ -405,6 +495,21 @@ export class PipeRoutingApp {
       return hit?.object.userData.dir || null;
     };
 
+    // Messpunkt-Auswahl: trifft Rohre/Bögen, Marker-Kugeln und die horizontale
+    // Referenzebene (falls vorhanden) - bewusst NICHT die Routing-Griffe/Endpunkt-Kugel,
+    // das sind flüchtige UI-Hilfsmittel, keine Modellgeometrie.
+    const pickMeasurePoint = (e) => {
+      const r = this.renderer.domElement.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      const y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      this.mouse.set(x, y);
+      this.ray.setFromCamera(this.mouse, this.camera);
+      const targets = [...this.pipes.children, ...this.markersGroup.children];
+      if (this.horizontalPlaneMesh) targets.push(this.horizontalPlaneMesh);
+      const hit = this.ray.intersectObjects(targets, true)[0];
+      return hit ? hit.point.clone() : null;
+    };
+
     // Schwenken in der Kamerasicht: OrbitControls ist dort komplett deaktiviert (sie
     // würde die Kamera vom fixen Aufnahmepunkt wegbewegen), daher hier eine einfache
     // eigene "Blick drehen, Position fest"-Steuerung wie bei einem Kugelpanorama.
@@ -432,6 +537,20 @@ export class PipeRoutingApp {
     }, { passive: false });
 
     this.renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (this.measuring && (e.pointerType === 'touch' || e.button === 0)) {
+        const p = pickMeasurePoint(e);
+        if (p) {
+          if (this.measurePoints.length >= 2) this.measurePoints = [];
+          this.measurePoints.push(p);
+          if (this.measurePoints.length === 2) {
+            this._updateMeasurementVisual(this.measurePoints[0], this.measurePoints[1]);
+          } else {
+            this._clearMeasurement();
+            this._addMeasureDot(p);
+          }
+        }
+        return; // im Messmodus keine Routing-/Schwenk-/Zoom-Interaktion parallel
+      }
       if (e.pointerType === 'touch') {
         this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (this._activePointers.size >= 2) {
