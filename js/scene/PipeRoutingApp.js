@@ -88,7 +88,7 @@ export class PipeRoutingApp {
     this.HANDLE_LINE = this.HANDLE_OFF * 0.65;
     this.MARKER_R = THREE.MathUtils.clamp(UNIT * 0.08, 0.006, 0.04);
     this.MARKER_ARROW = THREE.MathUtils.clamp(UNIT * 0.9, 0.06, 0.55);
-    this.STUB_LEN = THREE.MathUtils.clamp(0.15, 0.02, this.markerDist * 0.45);
+    this.STUB_LEN = THREE.MathUtils.clamp(0.35, 0.02, this.markerDist * 0.45);
     this.MIN_SEG = Math.max(this.PIPE_R * 3, UNIT * 0.01);
   }
 
