@@ -25,18 +25,211 @@
  * verifiziert (siehe /tests) - u.a. per Kontrollsumme, dass L1·c0+L2·c1+L3·c2 exakt
  * wieder den geforderten Verbindungsvektor ergibt.
  *
- * BEKANNTE GRENZE: Der Ecklösungs-Zweig (3 Segmente) findet nur Lösungen, bei denen sich
- * das exakte 3x3-Gleichungssystem [DA | Zwischenrichtung | DB] mit durchweg POSITIVEN
- * Längen lösen lässt. Erfordert die Geometrie eigentlich ein "Überschwingen" (z.B. erst
- * über das Ziel hinausfahren und dann zurück, ein klassisches S-förmiges Ausweichmanöver),
- * findet keiner der Kandidaten eine gültige Lösung, obwohl geometrisch durchaus ein
- * Rohrverlauf existieren würde - der Algorithmus liefert dann bewusst sauber `null`
- * zurück (siehe /tests, Testfall "Bekannte Grenze") statt falscher/negativer Geometrie.
- * In diesem Fall: manuell verlegen (wie überall in dieser App jederzeit möglich).
+ * KOMPLEXERE WEGE (4-5 Segmente): Lösen die einfachen Zweige oben nichts (z.B. weil die
+ * Geometrie ein "Überschwingen" braucht - erst über das Ziel hinausfahren und dann
+ * zurück, ein klassisches S-förmiges Ausweichmanöver), greift weiter unten eine
+ * allgemeinere Suche: sie probiert Kombinationen aus 2 bzw. 3 zusätzlichen
+ * Zwischenrichtungen aus einem festen globalen Satz von 18 Standardrichtungen (6
+ * Flächen- + 12 Kanten-Diagonalrichtungen eines Würfels - alles, was durch reine
+ * 90°/45°-Schritte von einer Achse aus erreichbar ist). Das ergibt pro Versuch ein
+ * unterbestimmtes Gleichungssystem (mehr Richtungen als Koordinaten) mit 1 bzw. 2 frei
+ * wählbaren Parametern - die Suche nach positiven Segmentlängen wird dann zu einem
+ * kleinen linearen Optimierungsproblem (Intervall- bzw. Polygon-Schnitt), siehe
+ * `searchWithMiddleCount` unten. Auch das findet nicht JEDE geometrisch mögliche Route
+ * (mehr als 3 zusätzliche Zwischenrichtungen werden aus Aufwandsgründen nicht probiert),
+ * aber deutlich mehr als die reinen 2-/3-Segment-Spezialfälle oben.
  */
 
 import * as THREE from 'three';
 import { perpDirs } from './geometry-helpers.js';
+
+// -- Genereller Mehrsegment-Löser (siehe Dateikopf-Kommentar) -----------------------------
+
+const FACE_DIRS = [
+  new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+  new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+  new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1),
+];
+/** Die 12 Kanten-Diagonalen eines Würfels (45° zwischen je zwei senkrechten Flächen-
+ *  richtungen) - zusammen mit FACE_DIRS der vollständige Satz "sauberer" Richtungen, in
+ *  die real verlegte Rohre laut Dateikopf-Kommentar zeigen können. */
+const EDGE_DIRS = [];
+for (let i = 0; i < FACE_DIRS.length; i++) {
+  for (let j = i + 1; j < FACE_DIRS.length; j++) {
+    if (Math.abs(FACE_DIRS[i].dot(FACE_DIRS[j])) > 0.5) continue; // identisch/entgegengesetzt
+    EDGE_DIRS.push(FACE_DIRS[i].clone().add(FACE_DIRS[j]).normalize());
+  }
+}
+export const STANDARD_DIRS = [...FACE_DIRS, ...EDGE_DIRS]; // 18 Richtungen
+
+function kCombinations(arr, k) {
+  const results = [];
+  const combo = [];
+  (function recurse(start) {
+    if (combo.length === k) { results.push(combo.slice()); return; }
+    for (let i = start; i < arr.length; i++) {
+      combo.push(arr[i]);
+      recurse(i + 1);
+      combo.pop();
+    }
+  })(0);
+  return results;
+}
+
+/**
+ * Löst M·L = delta für eine 3×K-Matrix M (Spalten = `dirs`) per Gauß-Jordan-Elimination
+ * (mit Partial Pivoting). Liefert eine Partikulärlösung (freie Variablen = 0) plus eine
+ * Basis des Nullraums (K-3 Vektoren), oder null, falls `dirs` den R³ nicht aufspannt
+ * (Rang < 3 - z.B. wenn alle gewählten Richtungen zufällig koplanar sind).
+ */
+export function solveUnderdetermined(dirs, delta) {
+  const K = dirs.length;
+  const rows = [
+    dirs.map((d) => d.x).concat(delta.x),
+    dirs.map((d) => d.y).concat(delta.y),
+    dirs.map((d) => d.z).concat(delta.z),
+  ];
+  const pivotCols = [];
+  let pivotRow = 0;
+  for (let col = 0; col < K && pivotRow < 3; col++) {
+    let maxRow = pivotRow, maxVal = Math.abs(rows[pivotRow][col]);
+    for (let r = pivotRow + 1; r < 3; r++) {
+      if (Math.abs(rows[r][col]) > maxVal) { maxVal = Math.abs(rows[r][col]); maxRow = r; }
+    }
+    if (maxVal < 1e-9) continue; // Spalte linear abhängig von bereits gewählten Pivots
+    [rows[pivotRow], rows[maxRow]] = [rows[maxRow], rows[pivotRow]];
+    const piv = rows[pivotRow][col];
+    for (let c = 0; c <= K; c++) rows[pivotRow][c] /= piv;
+    for (let r = 0; r < 3; r++) {
+      if (r === pivotRow) continue;
+      const f = rows[r][col];
+      if (f !== 0) for (let c = 0; c <= K; c++) rows[r][c] -= f * rows[pivotRow][c];
+    }
+    pivotCols.push(col);
+    pivotRow++;
+  }
+  if (pivotRow < 3) return null;
+
+  const freeCols = [];
+  for (let c = 0; c < K; c++) if (!pivotCols.includes(c)) freeCols.push(c);
+
+  const L0 = new Array(K).fill(0);
+  pivotCols.forEach((col, i) => { L0[col] = rows[i][K]; });
+
+  const nullBasis = freeCols.map((freeCol) => {
+    const n = new Array(K).fill(0);
+    n[freeCol] = 1;
+    pivotCols.forEach((col, i) => { n[col] = -rows[i][freeCol]; });
+    return n;
+  });
+
+  return { L0, nullBasis };
+}
+
+/** 1 freier Parameter: L(t) = L0 + t·n, gesucht ein t mit L(t) ≥ minLen überall. Die
+ *  Bedingungen ergeben je nach Vorzeichen von n[i] eine untere oder obere Schranke für t -
+ *  deren Schnitt ist ein Intervall (oder leer = keine Lösung). Von den gültigen t wird das
+ *  gewählt, das die Gesamtlänge minimiert (liegt bei einem linearen Ziel immer an einem
+ *  Rand des Intervalls). */
+export function solveInterval1D(L0, n, minLen) {
+  let lo = -Infinity, hi = Infinity;
+  for (let i = 0; i < L0.length; i++) {
+    if (Math.abs(n[i]) < 1e-12) {
+      if (L0[i] < minLen) return null;
+      continue;
+    }
+    const bound = (minLen - L0[i]) / n[i];
+    if (n[i] > 0) lo = Math.max(lo, bound); else hi = Math.min(hi, bound);
+  }
+  if (lo > hi + 1e-9) return null;
+  const sumN = n.reduce((a, b) => a + b, 0);
+  let t;
+  if (sumN > 1e-12) t = Number.isFinite(lo) ? lo : hi;
+  else if (sumN < -1e-12) t = Number.isFinite(hi) ? hi : lo;
+  else t = Number.isFinite(lo) ? lo : hi;
+  if (!Number.isFinite(t)) return null;
+  return L0.map((v, i) => v + t * n[i]);
+}
+
+/** Sutherland-Hodgman: schneidet ein konvexes Polygon mit der Halbebene a·t1+b·t2 ≤ c. */
+function clipPolygon(poly, a, b, c) {
+  if (poly.length === 0) return poly;
+  const inside = (p) => a * p[0] + b * p[1] <= c + 1e-9;
+  const intersect = (p1, p2) => {
+    const d1 = a * p1[0] + b * p1[1] - c, d2 = a * p2[0] + b * p2[1] - c;
+    const t = d1 / (d1 - d2);
+    return [p1[0] + t * (p2[0] - p1[0]), p1[1] + t * (p2[1] - p1[1])];
+  };
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const curr = poly[i], prev = poly[(i - 1 + poly.length) % poly.length];
+    const currIn = inside(curr), prevIn = inside(prev);
+    if (currIn) {
+      if (!prevIn) out.push(intersect(prev, curr));
+      out.push(curr);
+    } else if (prevIn) {
+      out.push(intersect(prev, curr));
+    }
+  }
+  return out;
+}
+
+/** 2 freie Parameter: L(t1,t2) = L0 + t1·n1 + t2·n2, gesucht ein (t1,t2) mit L ≥ minLen
+ *  überall. Jede Bedingung ist eine Halbebene in der (t1,t2)-Ebene - deren Schnitt (falls
+ *  nicht leer) ein konvexes Polygon. Das lineare Ziel "Gesamtlänge minimieren" wird an
+ *  einer Polygon-Ecke minimal, deshalb wird über alle Ecken die beste gewählt. */
+export function solvePolygon2D(L0, n1, n2, minLen, scale) {
+  const BIG = Math.max(scale, 1) * 1000;
+  let poly = [[-BIG, -BIG], [BIG, -BIG], [BIG, BIG], [-BIG, BIG]];
+  for (let i = 0; i < L0.length && poly.length; i++) {
+    poly = clipPolygon(poly, -n1[i], -n2[i], L0[i] - minLen);
+  }
+  if (poly.length < 3) return null;
+  const sumN1 = n1.reduce((a, b) => a + b, 0), sumN2 = n2.reduce((a, b) => a + b, 0);
+  const base = L0.reduce((a, b) => a + b, 0);
+  let best = null;
+  poly.forEach(([t1, t2]) => {
+    const total = base + t1 * sumN1 + t2 * sumN2;
+    if (!best || total < best.total) best = { total, t1, t2 };
+  });
+  return L0.map((v, i) => v + best.t1 * n1[i] + best.t2 * n2[i]);
+}
+
+/** Sucht positive Segmentlängen für die feste Richtungsfolge `dirs` (erstes = DA, letztes
+ *  = DB, dazwischen frei gewählte Zwischenrichtungen). Reicht die Anzahl Freiheitsgrade
+ *  (K-3) über 2 hinaus, wird bewusst nicht versucht (bräuchte ein 3D+-Polytop statt
+ *  Intervall/Polygon) - für diese Fälle bleibt manuelles Verlegen die Lösung. */
+function solveFeasibleLengths(dirs, delta, minLen) {
+  const sys = solveUnderdetermined(dirs, delta);
+  if (!sys) return null;
+  const { L0, nullBasis } = sys;
+  let L;
+  if (nullBasis.length === 0) L = L0.every((v) => v >= minLen) ? L0 : null;
+  else if (nullBasis.length === 1) L = solveInterval1D(L0, nullBasis[0], minLen);
+  else if (nullBasis.length === 2) L = solvePolygon2D(L0, nullBasis[0], nullBasis[1], minLen, delta.length());
+  else return null;
+  if (!L || L.some((v) => v < minLen - 1e-6)) return null;
+  return L;
+}
+
+/** Probiert alle Kombinationen aus `numMiddle` zusätzlichen Zwischenrichtungen (aus
+ *  STANDARD_DIRS) zwischen DA und DB und gibt die Lösung mit der kürzesten Gesamtlänge
+ *  zurück, oder null. */
+export function searchWithMiddleCount(DA, DB, delta, minSegmentLength, numMiddle) {
+  let best = null;
+  const combos = numMiddle === 0 ? [[]] : kCombinations(STANDARD_DIRS, numMiddle);
+  combos.forEach((mids) => {
+    const dirs = [DA, ...mids, DB];
+    const L = solveFeasibleLengths(dirs, delta, minSegmentLength);
+    if (L) {
+      const total = L.reduce((a, b) => a + b, 0);
+      if (!best || total < best.total) {
+        best = { total, steps: dirs.map((d, i) => ({ dir: d.clone(), len: L[i] })) };
+      }
+    }
+  });
+  return best;
+}
 
 /** Kandidaten-Zwischenrichtungen relativ zu einer Vorwärtsrichtung: die 4 90°-Richtungen
  *  plus die 4 daraus abgeleiteten 45°-Richtungen (gleicher Satz wie die manuellen
@@ -120,15 +313,12 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
       log('Lösung: Versatz mit 2×45°-Bogen, L1=', L1.toFixed(3), 'L2=', L2.toFixed(3), 'L3=', L3.toFixed(3));
       return [{ dir: DA.clone(), len: L1 }, { dir: kinkDir, len: L2 }, { dir: DA.clone(), len: L3 }];
     }
-    log('Versatz-Geometrie ergäbe zu kurze/negative Segmente (remaining=', remaining.toFixed(3), ').');
-    return null;
-  }
+    log('Versatz-Geometrie ergäbe zu kurze/negative Segmente (remaining=', remaining.toFixed(3), ') - versuche komplexere Wege.');
+  } else {
+    // Nicht-kollinearer Fall (z.B. Ecklösung): DA und DB sind linear unabhängig, ein
+    // Gleichungssystem [DA | Zwischenrichtung | DB] kann daher grundsätzlich lösbar sein.
 
-  // Nicht-kollinearer Fall (z.B. Ecklösung): DA und DB sind linear unabhängig, ein
-  // Gleichungssystem [DA | Zwischenrichtung | DB] kann daher grundsätzlich lösbar sein.
-
-  // 2 Segmente (ein Bogen): nur exakt lösbar, wenn delta in der von DA/DB aufgespannten Ebene liegt.
-  {
+    // 2 Segmente (ein Bogen): nur exakt lösbar, wenn delta in der von DA/DB aufgespannten Ebene liegt.
     const n = new THREE.Vector3().crossVectors(DA, DB).normalize();
     if (Math.abs(delta.dot(n)) < unit * 0.01) {
       const uu = DA.dot(DA), uv = DA.dot(DB), vv = DB.dot(DB), ud = DA.dot(delta), vd = DB.dot(delta);
@@ -143,7 +333,7 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
     }
   }
 
-  // 3 Segmente (zwei Bögen) über eine Zwischenrichtung aus dem Kandidatensatz.
+  // 3 Segmente (zwei Bögen) über eine Zwischenrichtung aus dem (DA-relativen) Kandidatensatz.
   let best = null;
   turnCandidates(DA).forEach((mid) => {
     const sol = solve3(DA, mid, DB, delta, minSegmentLength);
@@ -155,6 +345,17 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
     }
   });
   if (best) { log('Lösung: 3 Segmente (zwei Bögen), Gesamtlänge=', best.total.toFixed(3)); return best.steps; }
+
+  // Komplexere Wege: 1, 2 oder 3 zusätzliche Zwischenrichtungen aus dem vollständigen
+  // globalen Richtungssatz (nicht nur relativ zu DA) - deckt auch Fälle ab, die die
+  // einfacheren Zweige oben bewusst nicht lösen (S-förmige Überschwung-Manöver o.ä.).
+  for (const numMiddle of [1, 2, 3]) {
+    const res = searchWithMiddleCount(DA, DB, delta, minSegmentLength, numMiddle);
+    if (res) {
+      log(`Lösung: ${res.steps.length} Segmente (komplexer Weg, ${numMiddle} zusätzliche Zwischenrichtung(en)), Gesamtlänge=`, res.total.toFixed(3));
+      return res.steps;
+    }
+  }
 
   log('Keine Lösung gefunden.');
   return null;
