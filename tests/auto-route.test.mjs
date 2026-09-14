@@ -15,12 +15,17 @@
  *         auch der 2-freie-Parameter-Pfad (Polygon-Schnitt, in der Praxis selten der
  *         beste/kürzeste Kandidat und daher schwer über tryAutoRoute allein zu erreichen)
  *         korrekt ist, nicht nur der 1-Parameter-Pfad (Intervall).
+ *   9. Direkte Tests von staysWithinBounds (Überschwing-Erkennung) - stellt sicher, dass
+ *      tryAutoRoute Routen, die über B hinausschießen und zurückkommen, korrekt erkennt
+ *      und gegenüber einer direkten Alternative gleicher/kürzerer Länge zurückstellt (siehe
+ *      Test 5, wo die Rückfallebene - Überschwingen erlauben, wenn nötig - weiter greift).
  *
  * Ausführen: node tests/auto-route.test.mjs
  */
 import * as THREE from 'three';
 import {
   tryAutoRoute, solveUnderdetermined, solveInterval1D, solvePolygon2D, STANDARD_DIRS,
+  staysWithinBounds,
 } from '../js/scene/auto-route.js';
 
 let failures = 0;
@@ -190,6 +195,40 @@ function applyDirs(dirs, L) {
       check('solvePolygon2D: alle Längen ≥ minLen', L.every((v) => v >= minLen - 1e-9), `L=${L.map((v) => v.toFixed(4))}`);
     }
   }
+}
+
+// 10. staysWithinBounds: erkennt ein Überschwingen (Route verlässt die Bounding-Box
+//     zwischen A und B) korrekt, akzeptiert aber eine direkte Route ohne Überschwingen.
+{
+  const A = new THREE.Vector3(0, 0, 0), B = new THREE.Vector3(1, 1, 0);
+  const direct = [
+    { dir: new THREE.Vector3(1, 0, 0), len: 0.5 },
+    { dir: new THREE.Vector3(0.7071, 0.7071, 0), len: 0.7071 },
+    { dir: new THREE.Vector3(0, 1, 0), len: 0.5 },
+  ]; // bleibt innerhalb [0,1]x[0,1] - erreicht B exakt, kein Überschwingen
+  check('staysWithinBounds: direkte Route (kein Überschwingen) erkannt', staysWithinBounds(A, B, direct, 0.01));
+
+  const overshoot = [
+    { dir: new THREE.Vector3(1, 0, 0), len: 0.5 },
+    { dir: new THREE.Vector3(0, 1, 0), len: 1.3 }, // schießt über B.y=1 hinaus
+    { dir: new THREE.Vector3(1, 0, 0), len: 0.5 },
+    { dir: new THREE.Vector3(0, -1, 0), len: 0.3 }, // kommt von oben zurück zu B
+  ]; // Summe: (1, 1, 0) = delta, aber Zwischenpunkt bei y=1.3 > B.y=1
+  check('staysWithinBounds: überschwingende Route (y>B.y) erkannt', !staysWithinBounds(A, B, overshoot, 0.01));
+}
+
+// 11. tryAutoRoute bevorzugt bei mehreren Kandidaten die Route, die NICHT über B
+//     hinausschießt - auch wenn eine kürzere überschwingende Alternative existiert
+//     (Regressionsfall für die Nutzer-Rückmeldung "Route kommt vom falschen Ende").
+{
+  const A = marker([0, 0, 0], [1, 0, 0]);
+  const B = marker([0.122, 0.042, -0.185], [1, 0, 0]);
+  const unit = A.position.distanceTo(B.position);
+  const minSeg = 0.0113;
+  const steps = tryAutoRoute(A, B, unit, minSeg);
+  checkStepsReachTarget('Überschwing-Präferenz', steps, A, B);
+  check('Überschwing-Präferenz: gewählte Route schießt nicht über B hinaus',
+    steps && staysWithinBounds(A.position, B.position, steps, Math.max(minSeg, unit * 0.01)));
 }
 
 console.log(failures === 0 ? '\nAlle Tests bestanden.' : `\n${failures} Test(s) fehlgeschlagen.`);
