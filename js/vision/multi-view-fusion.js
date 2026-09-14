@@ -18,7 +18,7 @@
  * unabhängige Schätzungen von T_i werden anschließend gewichtet gemittelt.
  *
  * Ausgabe-Frame: statt Marker A als künstlichen Identitäts-Ursprung zu definieren, wird
- * eines der Fotos (das mit dem geringsten Reprojektionsfehler, "Anker-Foto") als reales
+ * eines der Fotos (das "Anker-Foto", siehe computeWeights() für die Auswahl) als reales
  * Referenzkamera-Koordinatensystem verwendet - markerA bleibt dessen unveränderte
  * Einzelbild-Pose, markerB wird die fusionierte Relativpose, zurücktransformiert ins
  * Anker-Frame. Dadurch bleibt die Bedeutung von markerData ({coordinateSystem:{origin:
@@ -27,7 +27,10 @@
  *
  * Bekannte Grenze: Marker A's absolute Position/Tiefe im Output bleibt die unverbesserte
  * Einzelbild-Schätzung des Anker-Fotos - verbessert wird die A→B-Relativgeometrie, und
- * genau die bestimmt die Rohrverlegungs-Genauigkeit.
+ * genau die bestimmt die Rohrverlegungs-Genauigkeit. Gerade deshalb lohnt sich ein
+ * möglichst gutes erstes Foto (siehe computeWeights()): bei dieser Homographie-basierten
+ * Methode ist eine frontale, bildfüllende Aufnahme nachweislich genauer als eine schräge -
+ * das Gegenteil der ersten Intuition, siehe Kommentar dort.
  */
 
 import { add3, scl3, cross3, normalize3, matVec3, symmetricOrthogonalize } from './linalg.js';
@@ -133,7 +136,21 @@ export function fuseGravityVectors(vectors, weights) {
 
 const ERR_FLOOR_PX = 0.25; // verhindert Division durch (fast) Null bei sehr niedrigem Fehler
 
-/** Gewichte aus Reprojektionsfehlern: kleiner Fehler = mehr Gewicht (1/Fehler²). */
+/**
+ * Gewichte aus Reprojektionsfehlern: kleiner Fehler = mehr Gewicht (1/Fehler²).
+ *
+ * Hinweis (Erkenntnis aus echten Testfotos + Nachrechnen, siehe Git-Historie): ein
+ * naheliegender erster Gedanke war, zusätzlich den Blickwinkel zur Markerebene
+ * einzubeziehen (in der Annahme, schräge Aufnahmen seien für die Tiefenschätzung besser
+ * konditioniert als frontale). Eine Monte-Carlo-Überprüfung an dieser konkreten
+ * Homographie-basierten Methode zeigt aber das Gegenteil: bei gleichem Eckenrauschen
+ * steigt sowohl der Reprojektionsfehler als auch der tatsächliche Positionsfehler
+ * monotton mit dem Blickwinkel - eine möglichst frontale, bildfüllende Aufnahme ist hier
+ * tatsächlich am genauesten (die foreshortening-bedingte Stauchung der Markerkanten bei
+ * schrägem Blick macht dieselbe Pixel-Ungenauigkeit relativ gesehen schlimmer). Reiner
+ * Reprojektionsfehler ist also - anders als zunächst vermutet - bereits ein verlässliches
+ * Qualitätsmaß für diese Methode und braucht keine zusätzliche Blickwinkel-Korrektur.
+ */
 export function computeWeights(reprojErrorsPx) {
   return reprojErrorsPx.map((e) => 1 / Math.max(e, ERR_FLOOR_PX) ** 2);
 }
@@ -234,6 +251,8 @@ export function fuseMultiView(shots) {
   const usable = shots.map((_, i) => i).filter((i) => !excludedIndices.includes(i));
   const weights = computeWeights(usable.map((i) => reprojErrors[i]));
 
+  // Anker-Foto = niedrigster Reprojektionsfehler - das bestimmt, welches Foto Marker A's
+  // unverbesserte Absolutposition liefert, sollte also möglichst gut konditioniert sein.
   const anchorIndex = usable.reduce(
     (best, i) => (reprojErrors[i] < reprojErrors[best] ? i : best),
     usable[0]
