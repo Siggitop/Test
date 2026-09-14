@@ -22,6 +22,7 @@ import {
   perpDirs, colorForDirection, CARDINALS, createLabelSprite,
 } from './geometry-helpers.js';
 import { setupHorizontalPlane, logPipeAxisAnglesToGravity } from './horizontal-plane.js';
+import { computeAlignmentCorrection } from './pipe-alignment.js';
 import { tryAutoRoute } from './auto-route.js';
 import { ScaleBar } from './scale-bar.js';
 
@@ -78,6 +79,8 @@ export class PipeRoutingApp {
     // Kalibrierung Bildmaße mitliefert - siehe capture-controller.js.
     this.calibK = (markerData.K && markerData.K.imageWidth && markerData.K.imageHeight) ? markerData.K : null;
 
+    this._applyPipeAlignmentCorrection(markerData);
+
     this._computeConstants();
     this._setupRenderer(container);
     this._setupSceneObjects();
@@ -91,6 +94,28 @@ export class PipeRoutingApp {
     requestAnimationFrame(this._animate);
 
     addEventListener('resize', () => this._onResize());
+  }
+
+  /**
+   * Rohrleitungen werden real immer in Waage, senkrecht oder im 45°-Winkel verlegt - die
+   * per ArUco-Marker gemessenen Rohrachsen weichen davon durch Erkennungsrauschen immer
+   * leicht ab. Korrigiert das direkt nach dem Einlesen (bevor irgendetwas mit den Achsen
+   * gezeichnet oder für die Routing-Startrichtung verwendet wird) und merkt sich die
+   * ursprünglichen, unkorrigierten Achsen separat für die Vergleichs-Visualisierung (siehe
+   * toggleOriginalAxes in _wireUI). Ändert nur die Ausrichtung (Drehung um den jeweils
+   * eigenen Mittelpunkt) - die Positionen bleiben unangetastet.
+   */
+  _applyPipeAlignmentCorrection(markerData) {
+    this._origAxesA = { xAxis: this.markerA.xAxis.clone() };
+    this._origAxesB = { xAxis: this.markerB.xAxis.clone() };
+    this.alignmentCorrection = null;
+    if (!markerData.gravityDown) return; // ohne "oben/unten" keine sinnvolle Korrektur möglich
+    const tableNormal = cvToThree(markerData.gravityDown).normalize();
+    const corr = computeAlignmentCorrection(this.markerA, this.markerB, tableNormal);
+    if (!corr) return;
+    this.alignmentCorrection = corr;
+    Object.assign(this.markerA, corr.markerA);
+    Object.assign(this.markerB, corr.markerB);
   }
 
   // -- Setup ------------------------------------------------------------------
@@ -133,6 +158,10 @@ export class PipeRoutingApp {
     this.joints = new THREE.Group(); this.scene.add(this.joints);
     this.markersGroup = new THREE.Group(); this.scene.add(this.markersGroup);
     this.measureGroup = new THREE.Group(); this.scene.add(this.measureGroup);
+    // Ghost-Visualisierung der ursprünglichen (unkorrigierten) Rohrachsen - nur befüllt
+    // und per Button einblendbar, wenn tatsächlich eine Ausrichtungs-Korrektur angewendet
+    // wurde (siehe _applyPipeAlignmentCorrection).
+    this.origAxesGroup = new THREE.Group(); this.origAxesGroup.visible = false; this.scene.add(this.origAxesGroup);
     // Gizmo (Routing-Griffe) startet ausgeblendet, um den Blick auf die Rohre frei zu
     // halten - wird bei Bedarf über den Knopf oben eingeblendet.
     this.joints.visible = false;
@@ -158,7 +187,10 @@ export class PipeRoutingApp {
 
     document.getElementById('markerInfo').textContent =
       `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist * 100).toFixed(1)} cm` +
-      (usedGravity ? ' · Horizontale aus Schwerkraft-Sensor' : ' · keine Horizontale (Sensor war bei der Aufnahme nicht verfügbar)');
+      (usedGravity ? ' · Horizontale aus Schwerkraft-Sensor' : ' · keine Horizontale (Sensor war bei der Aufnahme nicht verfügbar)') +
+      (this.alignmentCorrection
+        ? ` · Rohrachsen korrigiert (A Δ${this.alignmentCorrection.angleChangeADeg.toFixed(1)}° · B Δ${this.alignmentCorrection.angleChangeBDeg.toFixed(1)}°)`
+        : (usedGravity ? ' · Rohrachsen bereits exakt ausgerichtet' : ''));
 
     if (usedGravity) logPipeAxisAnglesToGravity(markerA, markerB, tableNormal);
     console.log('ArUco Marker A:', markerA);
@@ -170,12 +202,39 @@ export class PipeRoutingApp {
     this.markersGroup.add(createFadingStub(markerA.position, markerA.xAxis, this.STUB_LEN, this.PIPE_R * 0.9));
     this.markersGroup.add(createFadingStub(markerB.position, markerB.xAxis, this.STUB_LEN, this.PIPE_R * 0.9));
 
+    if (this.alignmentCorrection) {
+      this._addGhostAxis(markerA.position, this._origAxesA.xAxis);
+      this._addGhostAxis(markerB.position, this._origAxesB.xAxis);
+    }
+
     const targetGuide = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([markerA.position.clone(), markerB.position.clone()]),
       new THREE.LineDashedMaterial({ color: 0x93a1b3, dashSize: UNIT * 0.06, gapSize: UNIT * 0.04 })
     );
     targetGuide.computeLineDistances();
     this.scene.add(targetGuide);
+  }
+
+  /** Zeichnet die ursprüngliche (unkorrigierte) Rohrachse als graue gestrichelte
+   *  "Geister"-Linie - zum Vergleich mit der tatsächlich verwendeten, korrigierten Achse
+   *  (den kräftigen roten Pfeilen aus createMarkerVisual). Nur sichtbar, wenn
+   *  origAxesGroup.visible per Button eingeschaltet wird. */
+  _addGhostAxis(pos, origDir) {
+    const len = this.MARKER_ARROW;
+    const end = pos.clone().add(origDir.clone().multiplyScalar(len));
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([pos.clone(), end]),
+      new THREE.LineDashedMaterial({ color: 0x8a8f99, dashSize: len * 0.05, gapSize: len * 0.04 })
+    );
+    line.computeLineDistances();
+    this.origAxesGroup.add(line);
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(len * 0.05, len * 0.14, 10),
+      new THREE.MeshBasicMaterial({ color: 0x8a8f99 })
+    );
+    cone.position.copy(end);
+    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), origDir.clone().normalize());
+    this.origAxesGroup.add(cone);
   }
 
   _setupRoutingState() {
@@ -332,6 +391,15 @@ export class PipeRoutingApp {
       panelEl.style.display = visible ? '' : 'none';
       togglePanelBtn.classList.toggle('active', visible);
     };
+
+    const toggleOrigAxesBtn = document.getElementById('toggleOrigAxes');
+    if (this.alignmentCorrection) {
+      toggleOrigAxesBtn.style.display = '';
+      toggleOrigAxesBtn.onclick = () => {
+        this.origAxesGroup.visible = !this.origAxesGroup.visible;
+        toggleOrigAxesBtn.classList.toggle('active', this.origAxesGroup.visible);
+      };
+    }
 
     this._defaultHint = 'Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
 
