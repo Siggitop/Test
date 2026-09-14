@@ -14,12 +14,15 @@
 import { startCamera, estimateK } from './camera.js';
 import { GravitySensor } from './gravity.js';
 import { runDetection } from '../vision/detection.js';
-import { poseFromCorners } from '../vision/pose-estimation.js';
+import { poseFromCorners, reprojectionErrorRMS } from '../vision/pose-estimation.js';
+import { fuseMultiView } from '../vision/multi-view-fusion.js';
 import { loadCalibrationNpz } from '../calibration/npz-loader.js';
 import {
   generateCalibrationSheet,
   evaluateCalibrationPhoto,
 } from '../calibration/calibration-sheet.js';
+
+const MAX_SHOTS = 3;
 
 const DEMO_MARKER_DATA = {
   markerA: { id: 'A', position: { x: 0, y: 0, z: 0 }, xAxis: { x: 1, y: 0, z: 0 }, yAxis: { x: 0, y: 1, z: 0 }, zAxis: { x: 0, y: 0, z: 1 } },
@@ -56,6 +59,14 @@ export function initCaptureFlow(onMarkerData) {
 
   let camStream = null;
   let calibDist = [0, 0, 0, 0, 0]; // aktuell aktive Verzeichnungskoeffizienten (nur aus .npz)
+
+  // --- Mehrbild-Aufnahme: bis zu MAX_SHOTS akzeptierte Fotos werden gesammelt und bei
+  //     jedem neuen Foto per fuseMultiView() zu einer robusteren Marker-Geometrie fusioniert
+  //     (siehe js/vision/multi-view-fusion.js). idA/idB legen anhand des ersten akzeptierten
+  //     Fotos fest, welche ArUco-IDs "Marker A"/"Marker B" sind, damit eine zufällige dritte
+  //     Detektion in einem späteren Foto nicht versehentlich found[0]/found[1] vertauscht.
+  let shots = [];
+  let idA = null, idB = null;
 
   calibToggle.onclick = () => calibBox.classList.toggle('open');
 
@@ -233,9 +244,21 @@ export function initCaptureFlow(onMarkerData) {
       return;
     }
 
+    // Ab dem zweiten Foto: dieselben zwei Marker wie in Foto 1 verlangen (per ArUco-ID, nicht
+    // Array-Index) - sonst könnte eine zusätzliche Spurious-Detektion still "Marker A"/"Marker B"
+    // vertauschen und die Fusion mit inkonsistenten Daten füttern.
+    const mA = idA == null ? found[0] : found.find((m) => m.id === idA);
+    const mB = idB == null ? found[1] : found.find((m) => m.id === idB);
+    if (!mA || !mB) {
+      showAnalyzeError(
+        `Marker ${idA}/${idB} aus Foto 1 hier nicht gefunden - bitte dieselben zwei Marker ` +
+        'wie beim ersten Foto im Bild halten, dann erneut versuchen.'
+      );
+      return;
+    }
+
     const K = currentK();
     const markerLength = parseFloat(calMarkerLen.value) || 0.0705;
-    const mA = found[0], mB = found[1];
     const poseA = poseFromCorners(mA.corners, markerLength, K, calibDist);
     const poseB = poseFromCorners(mB.corners, markerLength, K, calibDist);
     if (!poseA || !poseB) {
@@ -243,40 +266,76 @@ export function initCaptureFlow(onMarkerData) {
       return;
     }
 
+    const eA = reprojectionErrorRMS(poseA, mA.corners, markerLength, K, calibDist);
+    const eB = reprojectionErrorRMS(poseB, mB.corners, markerLength, K, calibDist);
+    const pendingShot = {
+      poseA, poseB, K,
+      reprojErrorPx: Math.sqrt((eA * eA + eB * eB) / 2),
+      gravityDown: gravityDown || null,
+    };
+    const fused = fuseMultiView([...shots, pendingShot]);
+
     const markerData = {
       coordinateSystem: { origin: 'camera', unit: 'meter' },
-      markerA: { id: mA.id, ...poseA },
-      markerB: { id: mB.id, ...poseB },
-      K,
+      markerA: { id: idA == null ? mA.id : idA, ...fused.markerA },
+      markerB: { id: idB == null ? mB.id : idB, ...fused.markerB },
+      K: fused.K,
     };
-    if (gravityDown) markerData.gravityDown = gravityDown;
+    if (fused.gravityDown) markerData.gravityDown = fused.gravityDown;
 
     const distMM = (Math.hypot(
-      poseA.position.x - poseB.position.x,
-      poseA.position.y - poseB.position.y,
-      poseA.position.z - poseB.position.z
+      fused.markerA.position.x - fused.markerB.position.x,
+      fused.markerA.position.y - fused.markerB.position.y,
+      fused.markerA.position.z - fused.markerB.position.z
     ) * 1000).toFixed(1);
     const hasDist = calibDist.some((v) => v !== 0);
 
+    const shotCount = shots.length + 1;
+    const qualityRows = [...shots, pendingShot].map((s, i) => {
+      const ok = s.reprojErrorPx < 1.5;
+      return `Foto ${i + 1}: <span class="${ok ? 'okText' : 'errText'}">${s.reprojErrorPx.toFixed(2)}px Reprojektionsfehler</span>`;
+    }).join('<br>');
+    const warningsHtml = fused.warnings.length
+      ? `<div class="errText" style="margin-top:6px">${fused.warnings.join('<br>')}</div>` : '';
+    const canAddMore = shotCount < MAX_SHOTS;
+
     resultBox.style.display = 'block';
     resultBox.innerHTML = `<b class="okText">✓ ${found.length} Marker erkannt</b>
-     Verwendet: Marker ${mA.id} &amp; ${mB.id}<br>
-     Abstand: ${distMM} mm<br>
+     Verwendet: Marker ${mA.id} &amp; ${mB.id} · Foto ${shotCount}/${MAX_SHOTS}<br>
+     ${qualityRows}<br>
+     Abstand (fusioniert): ${distMM} mm<br>
      Kalibrierung: fx=${K.fx.toFixed(0)} fy=${K.fy.toFixed(0)}${hasDist ? ' · inkl. Verzeichnungskorrektur' : ''}<br>
-     Schwerkraft-Referenz: ${gravityDown ? '<span class="okText">vorhanden</span>' : '<span class="errText">fehlt (Ebene wird aus Markern geschätzt)</span>'}
+     Schwerkraft-Referenz: ${fused.gravityDown ? '<span class="okText">vorhanden</span>' : '<span class="errText">fehlt (Ebene wird aus Markern geschätzt)</span>'}
+     ${warningsHtml}
      <div class="row" style="margin-top:12px;gap:8px">
-       <button id="goToScene" class="primary" style="flex:1">Weiter zur 3D-Ansicht</button>
-       <button id="retakePhoto" style="flex:1">Erneut aufnehmen</button>
+       <button id="goToScene" class="primary" style="flex:1">Fertig, weiter zur 3D-Ansicht</button>
+       ${canAddMore ? '<button id="addAnotherPhoto" class="ghost" style="flex:1">+ Noch ein Foto</button>' : ''}
+       <button id="retakePhoto" style="flex:1">Wiederholen</button>
      </div>`;
     analyzeText.textContent = '';
     spinner.style.display = 'none';
 
+    function commitPendingShot() {
+      if (idA == null) { idA = mA.id; idB = mB.id; }
+      shots.push(pendingShot);
+    }
+
     document.getElementById('goToScene').onclick = () => {
+      commitPendingShot();
       camStream && camStream.getTracks().forEach((t) => t.stop());
       captureScreen.style.display = 'none';
       analyzeOverlay.classList.remove('show');
       onMarkerData(markerData);
     };
+    if (canAddMore) {
+      document.getElementById('addAnotherPhoto').onclick = () => {
+        commitPendingShot();
+        analyzeOverlay.classList.remove('show');
+        captureStatus.textContent =
+          `Foto ${shots.length + 1}/${MAX_SHOTS}: Kamera an eine andere Position/anderen Blickwinkel ` +
+          'bewegen, dann erneut auslösen.';
+      };
+    }
     document.getElementById('retakePhoto').onclick = () => {
       analyzeOverlay.classList.remove('show');
     };

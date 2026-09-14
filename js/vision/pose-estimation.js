@@ -121,3 +121,41 @@ export function poseFromCorners(corners, markerLength, K, dist) {
     zAxis: { x: r3[0], y: r3[1], z: r3[2] },
   };
 }
+
+/**
+ * RMS-Reprojektionsfehler (in Pixeln) der 4 Markerecken unter einer geschätzten Pose.
+ * Reiner Lochkamera-Vergleich, keine erneute Verzeichnung nötig: poseFromCorners arbeitet
+ * bereits in entzerrten Bildkoordinaten, hier wird also gegen dieselben entzerrten Ecken
+ * verglichen wie beim Lösen der Homographie.
+ *
+ * Dient der Mehrbild-Fusion (multi-view-fusion.js) als Qualitäts-/Gewichtungssignal pro
+ * Aufnahme - je kleiner der Fehler, desto mehr Gewicht bekommt dieses Foto beim Fusionieren.
+ *
+ * @param {{position,xAxis,yAxis,zAxis}} pose geschätzte Marker-Pose (Kamerakoordinaten)
+ * @param {Array<{x:number,y:number}>} corners 4 erkannte Bildecken (verzeichnet, wie roh
+ *   von der Erkennung geliefert - wird hier intern entzerrt)
+ * @param {number} markerLength reale Kantenlänge des Markers in Metern
+ * @param {{fx,fy,cx,cy}} K Kamera-Matrix
+ * @param {number[]} [dist] Verzeichnungskoeffizienten, optional
+ * @returns {number} RMS-Fehler in Pixeln über alle 4 Ecken
+ */
+export function reprojectionErrorRMS(pose, corners, markerLength, K, dist) {
+  const h = markerLength / 2;
+  const objPts = [[-h, h], [h, h], [h, -h], [-h, -h]];
+  const r1 = [pose.xAxis.x, pose.xAxis.y, pose.xAxis.z];
+  const r2 = [pose.yAxis.x, pose.yAxis.y, pose.yAxis.z];
+  const t = [pose.position.x, pose.position.y, pose.position.z];
+
+  let sumSq = 0;
+  for (let i = 0; i < 4; i++) {
+    const [X, Y] = objPts[i];
+    const px = r1[0] * X + r2[0] * Y + t[0];
+    const py = r1[1] * X + r2[1] * Y + t[1];
+    const pz = r1[2] * X + r2[2] * Y + t[2];
+    const u = K.fx * px / pz + K.cx;
+    const v = K.fy * py / pz + K.cy;
+    const det = undistortPoint(corners[i].x, corners[i].y, K, dist);
+    sumSq += (u - det.x) ** 2 + (v - det.y) ** 2;
+  }
+  return Math.sqrt(sumSq / 4);
+}

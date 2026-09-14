@@ -8,6 +8,6 @@
     "three": "^0.180.0"
   },
   "scripts": {
-    "test": "node tests/linalg.test.mjs && node tests/pose-estimation.test.mjs && node tests/npz-loader.test.mjs && node tests/auto-route.test.mjs && node tests/pipe-alignment.test.mjs"
+    "test": "node tests/linalg.test.mjs && node tests/pose-estimation.test.mjs && node tests/npz-loader.test.mjs && node tests/auto-route.test.mjs && node tests/pipe-alignment.test.mjs && node tests/multi-view-fusion.test.mjs"
   }
 }
