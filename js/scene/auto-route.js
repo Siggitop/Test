@@ -261,25 +261,6 @@ function buildCandidatePool(DA, DB) {
 }
 
 /**
- * Prüft, ob eine Route (Liste aus {dir,len}) an JEDEM Zwischenpunkt innerhalb der
- * achsenparallelen Bounding-Box zwischen A und B bleibt (mit etwas Toleranz). Reine
- * Gesamtlängen-Minimierung allein bevorzugt manchmal ein "Überschwingen" (z.B. an B
- * vorbeifahren und dann zurück, um aus der richtigen Richtung anzukommen) - das ist zwar
- * oft sogar kürzer, sieht aber falsch aus ("kommt vom falschen Ende") und ist praktisch
- * unüblich. Bleibt eine Route innerhalb der Box, überschwingt sie nicht.
- */
-export function staysWithinBounds(A, B, steps, tolerance) {
-  const lo = new THREE.Vector3(Math.min(A.x, B.x), Math.min(A.y, B.y), Math.min(A.z, B.z)).subScalar(tolerance);
-  const hi = new THREE.Vector3(Math.max(A.x, B.x), Math.max(A.y, B.y), Math.max(A.z, B.z)).addScalar(tolerance);
-  let cur = A.clone();
-  for (const s of steps) {
-    cur = cur.clone().addScaledVector(s.dir, s.len);
-    if (cur.x < lo.x || cur.x > hi.x || cur.y < lo.y || cur.y > hi.y || cur.z < lo.z || cur.z > hi.z) return false;
-  }
-  return true;
-}
-
-/**
  * Berechnet einen Vorschlag für die automatische Rohr-Route zwischen zwei Markern.
  *
  * @param {{position:THREE.Vector3, xAxis:THREE.Vector3}} markerA
@@ -379,20 +360,10 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
 
   if (!candidates.length) { log('Keine Lösung gefunden.'); return null; }
   candidates.sort((a, b) => a.total - b.total);
-
-  // Unter mehreren Kandidaten werden die bevorzugt, die NICHT über B hinausschießen -
-  // andernfalls würde die reine Längen-Minimierung gelegentlich ein zwar kürzeres, aber
-  // an B "vorbeischießendes und zurückkommendes" Überschwing-Manöver wählen (sieht aus,
-  // als würde die Route vom falschen Ende der Achse kommen). Überschwingen bleibt als
-  // letzter Ausweg erlaubt, falls es gar keine direkte Lösung gibt.
-  const tolerance = Math.max(minSegmentLength, unit * 0.01);
-  const direct = candidates.filter((c) => staysWithinBounds(A, B, c.steps, tolerance));
-  const chosenFrom = direct.length ? direct : candidates;
-  const best = chosenFrom[0];
+  const best = candidates[0];
   log(
     `Lösung: ${best.label}, ${best.steps.length} Segment(e), Gesamtlänge=`, best.total.toFixed(3),
-    direct.length ? '(direkt, kein Überschwingen)' : '(Überschwingen - keine direkte Lösung gefunden)',
-    `- kürzeste von ${chosenFrom.length}/${candidates.length} Kandidat(en): ${candidates.map((c) => c.total.toFixed(3)).join(', ')}`
+    `(kürzeste von ${candidates.length} verglichenen Kandidat(en): ${candidates.map((c) => c.total.toFixed(3)).join(', ')})`
   );
   return best.steps;
 }
