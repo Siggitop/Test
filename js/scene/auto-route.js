@@ -1,43 +1,49 @@
 /**
  * auto-route.js
  * -------------
- * Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Bögen.
+ * Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Bögen - und zwar mit
+ * der KÜRZESTEN Lösung, die sich innerhalb des unten beschriebenen, auf 1-5 Segmente und
+ * "saubere" 90°/45°-Richtungen begrenzten Suchraums finden lässt (kein exhaustiver
+ * kürzester Pfad über alle geometrisch denkbaren Richtungen/Winkel - das wäre für ein
+ * Echtzeit-Klick-Ergebnis weder nötig noch praxisgerecht, da real verlegte Rohre ohnehin
+ * nur in Waage/senkrecht/45° liegen, siehe pipe-alignment.js).
  *
  * Startrichtung an A = markerA.xAxis (wie beim manuellen Routing). Ankunftsrichtung an B
  * = -markerB.xAxis: an B zeigt +X in Richtung des vorhandenen Rohrs dahinter (siehe
  * geometry-helpers.createFadingStub), die neue Route muss also aus der Gegenrichtung
  * ankommen, um sauber in einer Linie in das vorhandene Rohr überzugehen.
  *
- * Ergebnis ist nur ein pragmatischer, gültiger Vorschlag (kürzeste Lösung mit maximal
- * zwei Zwischen-Bögen) - kein optimaler/kürzester Pfad im umfassenden Sinn, und bewusst
- * jederzeit über die normalen Routing-Werkzeuge weiter anpassbar.
+ * VORGEHEN: `tryAutoRoute` bricht NICHT beim ersten Treffer ab, sondern sammelt Kandidaten
+ * aus mehreren Strategien und gibt am Ende die mit der kürzesten Gesamtlänge zurück -
+ * sonst wäre z.B. eine früh gefundene 3-Segment-Lösung nicht vergleichbar mit einer
+ * eventuell kürzeren 2- oder 4-Segment-Alternative:
  *
- * WICHTIG: Sobald DA und DB (anti-)parallel sind - und genau das ist der mit Abstand
- * häufigste Realfall (gerade Verlängerung ODER seitlicher Versatz zwischen zwei etwa
- * gleich ausgerichteten Rohrenden) - sind DA und DB als Vektoren linear ABHÄNGIG. Jedes
- * 3x3-Gleichungssystem der Form [DA | irgendeine Zwischenrichtung | DB] ist dann IMMER
- * singulär (Rang höchstens 2), unabhängig von der gewählten Zwischenrichtung. Das war der
- * ursprüngliche Grund, warum Auto-Route zuerst praktisch nie eine Lösung gefunden hat.
- * Für diesen Fall gibt es deshalb einen eigenen "Versatz"-Zweig weiter unten (zwei gleich
- * große Bögen mit geradem Zwischenstück - die klassische Versatz-Lösung).
+ *  1. Direkte gerade Verbindung (1 Segment) - falls anwendbar unschlagbar kurz (Luftlinie).
+ *  2. Kollinearer Versatz (2×45°-Bogen mit geradem Zwischenstück) - die klassische Lösung
+ *     für den mit Abstand häufigsten Praxisfall (DA und DB (anti-)parallel, z.B. gerade
+ *     Verlängerung oder seitlicher Versatz zwischen zwei gleich ausgerichteten
+ *     Rohrenden). Bei (anti-)parallelem DA/DB ist jedes Gleichungssystem
+ *     [DA | Zwischenrichtung | DB] singulär (Rang ≤ 2), unabhängig von der gewählten
+ *     Zwischenrichtung - ohne diesen eigenen Zweig fände Auto-Route für den häufigsten
+ *     Fall praktisch nie eine Lösung.
+ *  3. Nicht-kollinearer Fall: exakte 2-Segment-Lösung (ein Bogen), falls delta in der von
+ *     DA/DB aufgespannten Ebene liegt.
+ *  4. Allgemeine Suche mit 1-3 zusätzlichen Zwischenrichtungen (3-5 Segmente gesamt) aus
+ *     einem kombinierten Kandidatenpool (18 feste Weltrichtungen + Richtungen relativ zu
+ *     DA und DB) - deckt sowohl den klassischen "eine Ecklösung"-Fall als auch komplexere
+ *     Wege ab, die ein Überschwingen brauchen (S-förmiger Umweg), siehe
+ *     `searchWithMiddleCount`/`buildCandidatePool` unten. Für 4/5 Segmente ergibt sich ein
+ *     unterbestimmtes Gleichungssystem mit 1 bzw. 2 freien Parametern - die Suche nach
+ *     positiven Segmentlängen wird dann zu einem kleinen linearen Optimierungsproblem
+ *     (Intervall- bzw. Polygon-Schnitt).
  *
- * Alle drei Zweige (gerade / Versatz / Ecklösung) wurden gegen synthetische Testfälle
- * verifiziert (siehe /tests) - u.a. per Kontrollsumme, dass L1·c0+L2·c1+L3·c2 exakt
- * wieder den geforderten Verbindungsvektor ergibt.
+ * Alle Zweige wurden gegen synthetische Testfälle verifiziert (siehe /tests) - u.a. per
+ * Kontrollsumme, dass die Teilstücke exakt wieder den geforderten Verbindungsvektor
+ * ergeben.
  *
- * KOMPLEXERE WEGE (4-5 Segmente): Lösen die einfachen Zweige oben nichts (z.B. weil die
- * Geometrie ein "Überschwingen" braucht - erst über das Ziel hinausfahren und dann
- * zurück, ein klassisches S-förmiges Ausweichmanöver), greift weiter unten eine
- * allgemeinere Suche: sie probiert Kombinationen aus 2 bzw. 3 zusätzlichen
- * Zwischenrichtungen aus einem festen globalen Satz von 18 Standardrichtungen (6
- * Flächen- + 12 Kanten-Diagonalrichtungen eines Würfels - alles, was durch reine
- * 90°/45°-Schritte von einer Achse aus erreichbar ist). Das ergibt pro Versuch ein
- * unterbestimmtes Gleichungssystem (mehr Richtungen als Koordinaten) mit 1 bzw. 2 frei
- * wählbaren Parametern - die Suche nach positiven Segmentlängen wird dann zu einem
- * kleinen linearen Optimierungsproblem (Intervall- bzw. Polygon-Schnitt), siehe
- * `searchWithMiddleCount` unten. Auch das findet nicht JEDE geometrisch mögliche Route
- * (mehr als 3 zusätzliche Zwischenrichtungen werden aus Aufwandsgründen nicht probiert),
- * aber deutlich mehr als die reinen 2-/3-Segment-Spezialfälle oben.
+ * GRENZE: mehr als 3 zusätzliche Zwischenrichtungen (>5 Segmente insgesamt) werden aus
+ * Aufwandsgründen nicht probiert (bräuchte ein 3D+-Polytop statt Intervall/Polygon) - für
+ * so einen Fall bleibt manuelles Verlegen die Lösung.
  */
 
 import * as THREE from 'three';
@@ -213,11 +219,11 @@ function solveFeasibleLengths(dirs, delta, minLen) {
 }
 
 /** Probiert alle Kombinationen aus `numMiddle` zusätzlichen Zwischenrichtungen (aus
- *  STANDARD_DIRS) zwischen DA und DB und gibt die Lösung mit der kürzesten Gesamtlänge
- *  zurück, oder null. */
-export function searchWithMiddleCount(DA, DB, delta, minSegmentLength, numMiddle) {
+ *  `pool`) zwischen DA und DB und gibt die Lösung mit der kürzesten Gesamtlänge zurück,
+ *  oder null. */
+export function searchWithMiddleCount(DA, DB, delta, minSegmentLength, numMiddle, pool = STANDARD_DIRS) {
   let best = null;
-  const combos = numMiddle === 0 ? [[]] : kCombinations(STANDARD_DIRS, numMiddle);
+  const combos = numMiddle === 0 ? [[]] : kCombinations(pool, numMiddle);
   combos.forEach((mids) => {
     const dirs = [DA, ...mids, DB];
     const L = solveFeasibleLengths(dirs, delta, minSegmentLength);
@@ -239,14 +245,19 @@ function turnCandidates(fwd) {
   return [...p, ...p.map((v) => fwd.clone().add(v).normalize())];
 }
 
-/** Löst L1·c0 + L2·c1 + L3·c2 = delta exakt. null, wenn singulär oder eine Länge unter
- *  minSegmentLength/negativ wäre. */
-function solve3(c0, c1, c2, delta, minSegmentLength) {
-  const M = new THREE.Matrix3().set(c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z);
-  if (Math.abs(M.determinant()) < 1e-9) return null;
-  const L = delta.clone().applyMatrix3(M.clone().invert());
-  if (L.x >= minSegmentLength && L.y >= minSegmentLength && L.z >= minSegmentLength) return [L.x, L.y, L.z];
-  return null;
+/** Kombinierter Kandidatenpool für die Mehrsegment-Suche: die 18 festen Weltrichtungen
+ *  PLUS die Richtungen relativ zu DA und relativ zu DB (perpDirs + 45°-Kombinationen,
+ *  gleicher Satz wie die manuellen Routing-Griffe). Die Weltrichtungen allein reichen nur,
+ *  wenn DA/DB bereits exakt achsenausgerichtet sind (z.B. nach der automatischen
+ *  Rohrachsen-Korrektur, siehe pipe-alignment.js) - die DA-/DB-relativen Kandidaten
+ *  decken auch (noch) nicht exakt ausgerichtete Marker-Achsen ab. Nahezu identische
+ *  Richtungen (z.B. wenn DA selbst schon eine Weltrichtung ist) werden entfernt, damit
+ *  die Suche nicht unnötig viele redundante Kombinationen durchprobiert. */
+function buildCandidatePool(DA, DB) {
+  const raw = [...STANDARD_DIRS, ...turnCandidates(DA), ...turnCandidates(DB)];
+  const pool = [];
+  raw.forEach((d) => { if (!pool.some((u) => u.dot(d) > 0.999)) pool.push(d); });
+  return pool;
 }
 
 /**
@@ -274,10 +285,21 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
     'DA·DB=', DA.dot(DB).toFixed(3)
   );
 
-  // 1 Segment: direkte gerade Verbindung.
+  // Sammelt ALLE gültigen Kandidaten aus jeder Strategie unten (statt bei der ersten
+  // gefundenen Lösung sofort aufzuhören) - am Ende wird die Kandidatin mit der
+  // kürzesten Gesamtlänge zurückgegeben. Nur so ist "kürzestmöglich" (innerhalb des
+  // abgesuchten Raums) tatsächlich garantiert: eine früh gefundene 3-Segment-Lösung kann
+  // z.B. länger sein als eine andernorts mögliche 4- oder 5-Segment-Lösung.
+  const candidates = [];
+  const addCandidate = (steps, label) => {
+    if (!steps) return;
+    candidates.push({ total: steps.reduce((s, x) => s + x.len, 0), steps, label });
+  };
+
+  // 1 Segment: direkte gerade Verbindung - falls anwendbar immer die global kürzeste
+  // Lösung (Luftlinie), da kein Umweg sie unterbieten kann.
   if (deltaDir.dot(DA) > 0.999 && deltaDir.dot(DB) > 0.999) {
-    log('Lösung: 1 gerades Segment.');
-    return [{ dir: DA.clone(), len: delta.length() }];
+    addCandidate([{ dir: DA.clone(), len: delta.length() }], '1 Segment (direkt)');
   }
 
   const collinear = Math.abs(DA.dot(DB)) > 0.97;
@@ -287,38 +309,31 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
     // ("seitlicher Versatz") trennen. Zwei gleich große 45°-Bögen mit einem geraden
     // Zwischenstück überbrücken den seitlichen Versatz, während vor und nach dem
     // Versatz weiter parallel zu DA verlegt wird (bzw. bei DB≈-DA automatisch auch
-    // parallel zu DB).
+    // parallel zu DB). Das ist die "natürliche" 3-Segment-Lösung für diesen mit Abstand
+    // häufigsten Praxisfall; wird trotzdem nur als EIN Kandidat neben der allgemeinen
+    // Suche unten gewertet, statt sofort zurückgegeben zu werden.
     const along = delta.dot(DA);
     const lateral = delta.clone().sub(DA.clone().multiplyScalar(along));
     const latLen = lateral.length();
     log('Kollinearer Fall: Vorlauf=', along.toFixed(3), 'seitlicher Versatz=', latLen.toFixed(3));
 
-    if (latLen < minSegmentLength) {
-      if (along > 2 * minSegmentLength && deltaDir.dot(DA) > 0.9) {
-        log('Kaum Versatz, aber nicht exakt fluchtend -> ein gerades Segment.');
-        return [{ dir: DA.clone(), len: delta.length() }];
+    if (latLen < minSegmentLength && along > 2 * minSegmentLength && deltaDir.dot(DA) > 0.9) {
+      addCandidate([{ dir: DA.clone(), len: delta.length() }], 'kaum Versatz (gerade)');
+    } else if (latLen >= minSegmentLength) {
+      const latDir = lateral.clone().normalize();
+      const kinkDir = DA.clone().add(latDir).normalize(); // 45° zwischen DA und Versatzrichtung
+      const L2 = latLen / Math.SQRT1_2;             // Bogenlänge, die genau latLen Versatz erzeugt
+      const remaining = along - L2 * Math.SQRT1_2;   // Vorlauf abzüglich Versatz-Segment-Anteil
+      if (L2 >= minSegmentLength && remaining >= 2 * minSegmentLength) {
+        addCandidate([
+          { dir: DA.clone(), len: remaining / 2 }, { dir: kinkDir, len: L2 }, { dir: DA.clone(), len: remaining / 2 },
+        ], 'Versatz (45°-Jog)');
       }
-      log('Kollinear, aber kein sinnvoller Versatz gefunden (zu wenig Vorlauf/Versatz).');
-      return null;
     }
-
-    const latDir = lateral.clone().normalize();
-    const kinkDir = DA.clone().add(latDir).normalize(); // 45° zwischen DA und Versatzrichtung
-    const L2 = latLen / Math.SQRT1_2;             // Bogenlänge, die genau latLen Versatz erzeugt
-    const forwardUsed = L2 * Math.SQRT1_2;         // = latLen, Vorlauf-Anteil des Versatz-Segments
-    const remaining = along - forwardUsed;
-
-    if (L2 >= minSegmentLength && remaining >= 2 * minSegmentLength) {
-      const L1 = remaining / 2, L3 = remaining / 2;
-      log('Lösung: Versatz mit 2×45°-Bogen, L1=', L1.toFixed(3), 'L2=', L2.toFixed(3), 'L3=', L3.toFixed(3));
-      return [{ dir: DA.clone(), len: L1 }, { dir: kinkDir, len: L2 }, { dir: DA.clone(), len: L3 }];
-    }
-    log('Versatz-Geometrie ergäbe zu kurze/negative Segmente (remaining=', remaining.toFixed(3), ') - versuche komplexere Wege.');
   } else {
-    // Nicht-kollinearer Fall (z.B. Ecklösung): DA und DB sind linear unabhängig, ein
-    // Gleichungssystem [DA | Zwischenrichtung | DB] kann daher grundsätzlich lösbar sein.
-
-    // 2 Segmente (ein Bogen): nur exakt lösbar, wenn delta in der von DA/DB aufgespannten Ebene liegt.
+    // Nicht-kollinearer Fall: 2 Segmente (ein Bogen) - nur exakt lösbar, wenn delta in
+    // der von DA/DB aufgespannten Ebene liegt (Sonderfall, den die allgemeine Suche
+    // unten wegen der dort vorausgesetzten vollen Rang-3-Bedingung nicht abdeckt).
     const n = new THREE.Vector3().crossVectors(DA, DB).normalize();
     if (Math.abs(delta.dot(n)) < unit * 0.01) {
       const uu = DA.dot(DA), uv = DA.dot(DB), vv = DB.dot(DB), ud = DA.dot(delta), vd = DB.dot(delta);
@@ -326,37 +341,29 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
       if (Math.abs(det) > 1e-9) {
         const L1 = (ud * vv - vd * uv) / det, L2 = (uu * vd - uv * ud) / det;
         if (L1 >= minSegmentLength && L2 >= minSegmentLength) {
-          log('Lösung: 2 Segmente (ein Bogen).');
-          return [{ dir: DA.clone(), len: L1 }, { dir: DB.clone(), len: L2 }];
+          addCandidate([{ dir: DA.clone(), len: L1 }, { dir: DB.clone(), len: L2 }], '2 Segmente (ein Bogen)');
         }
       }
     }
   }
 
-  // 3 Segmente (zwei Bögen) über eine Zwischenrichtung aus dem (DA-relativen) Kandidatensatz.
-  let best = null;
-  turnCandidates(DA).forEach((mid) => {
-    const sol = solve3(DA, mid, DB, delta, minSegmentLength);
-    if (sol) {
-      const total = sol[0] + sol[1] + sol[2];
-      if (!best || total < best.total) {
-        best = { total, steps: [{ dir: DA.clone(), len: sol[0] }, { dir: mid.clone(), len: sol[1] }, { dir: DB.clone(), len: sol[2] }] };
-      }
-    }
-  });
-  if (best) { log('Lösung: 3 Segmente (zwei Bögen), Gesamtlänge=', best.total.toFixed(3)); return best.steps; }
-
-  // Komplexere Wege: 1, 2 oder 3 zusätzliche Zwischenrichtungen aus dem vollständigen
-  // globalen Richtungssatz (nicht nur relativ zu DA) - deckt auch Fälle ab, die die
-  // einfacheren Zweige oben bewusst nicht lösen (S-förmige Überschwung-Manöver o.ä.).
+  // Allgemeine Suche: 1 bis 3 zusätzliche Zwischenrichtungen (3 bis 5 Segmente gesamt)
+  // aus einem kombinierten Kandidatenpool (feste Weltrichtungen + relativ zu DA/DB) -
+  // deckt strukturell auch den alten "3-Segmente-DA-relativ"-Sonderfall mit ab (der
+  // Kandidatenpool enthält dessen 8 Richtungen als Teilmenge), plus komplexere Wege für
+  // Fälle, die ein Überschwingen brauchen.
+  const pool = buildCandidatePool(DA, DB);
   for (const numMiddle of [1, 2, 3]) {
-    const res = searchWithMiddleCount(DA, DB, delta, minSegmentLength, numMiddle);
-    if (res) {
-      log(`Lösung: ${res.steps.length} Segmente (komplexer Weg, ${numMiddle} zusätzliche Zwischenrichtung(en)), Gesamtlänge=`, res.total.toFixed(3));
-      return res.steps;
-    }
+    const res = searchWithMiddleCount(DA, DB, delta, minSegmentLength, numMiddle, pool);
+    if (res) addCandidate(res.steps, `${res.steps.length} Segmente (${numMiddle} Zwischenrichtung(en))`);
   }
 
-  log('Keine Lösung gefunden.');
-  return null;
+  if (!candidates.length) { log('Keine Lösung gefunden.'); return null; }
+  candidates.sort((a, b) => a.total - b.total);
+  const best = candidates[0];
+  log(
+    `Lösung: ${best.label}, ${best.steps.length} Segment(e), Gesamtlänge=`, best.total.toFixed(3),
+    `(kürzeste von ${candidates.length} verglichenen Kandidat(en): ${candidates.map((c) => c.total.toFixed(3)).join(', ')})`
+  );
+  return best.steps;
 }

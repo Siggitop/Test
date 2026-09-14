@@ -81,6 +81,11 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
 //    entlang DB), damit garantiert eine gültige Lösung existiert - siehe Test 5 für den
 //    Fall, dass für eine beliebig gewählte B-Position/Achse KEINE einfache Lösung
 //    existiert (das ist bei diesem Algorithmus-Ansatz nicht ungewöhnlich, siehe dort).
+//    Regressionssicherung "kürzester Pfad": die naheliegende 3-Segment-Lösung über die
+//    (nur DA-relativen) Kandidaten hätte früher Gesamtlänge 0.512 ergeben und wurde sofort
+//    zurückgegeben, ohne nach etwas Kürzerem zu suchen - der erweiterte, alle Kandidaten
+//    vergleichende Algorithmus findet jetzt eine echte 5-Segment-Lösung mit spürbar
+//    weniger Gesamtlänge (näher an der theoretischen Luftlinie von ≈0.354).
 {
   const A = marker([0, 0, 0], [1, 0, 0]);
   // delta = 0.2*(1,0,0) + 0.15*(0,1,0) + 0.25*(0,0,-1) = (0.2, 0.15, -0.25)
@@ -88,6 +93,9 @@ function checkStepsReachTarget(name, steps, markerA, markerB) {
   const unit = A.position.distanceTo(B.position);
   const steps = tryAutoRoute(A, B, unit, unit * 0.02);
   checkStepsReachTarget('90°-Ecke (3D, konstruiert lösbar)', steps, A, B);
+  const total = steps ? steps.reduce((s, x) => s + x.len, 0) : Infinity;
+  check('90°-Ecke: kürzer als die frühere (nur DA-relative) 3-Segment-Lösung (0.512)',
+    total < 0.5, `Gesamtlänge=${total.toFixed(3)}`);
 }
 
 // 5. Ehemals dokumentierte Grenze: eine Ecklösung, die VOLLSTÄNDIG in einer Ebene liegt
