@@ -1,12 +1,13 @@
 /**
  * auto-route.js
  * -------------
- * Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Bögen - und zwar mit
- * der KÜRZESTEN Lösung, die sich innerhalb des unten beschriebenen, auf 1-5 Segmente und
- * "saubere" 90°/45°-Richtungen begrenzten Suchraums finden lässt (kein exhaustiver
- * kürzester Pfad über alle geometrisch denkbaren Richtungen/Winkel - das wäre für ein
- * Echtzeit-Klick-Ergebnis weder nötig noch praxisgerecht, da real verlegte Rohre ohnehin
- * nur in Waage/senkrecht/45° liegen, siehe pipe-alignment.js).
+ * Verbindet Marker A und B automatisch mit geraden Stücken + 90°/45°-Winkeln - und zwar mit
+ * SO WENIG WINKELN/BÖGEN WIE MÖGLICH (nur so viele wie zwingend nötig), unter allen so
+ * gefundenen Lösungen mit der kürzesten Gesamtlänge als Kriterium zweiter Ordnung. Der
+ * Suchraum ist auf 1-5 Segmente und "saubere" 90°/45°-Richtungen begrenzt (kein
+ * exhaustiver kürzester Pfad über alle geometrisch denkbaren Richtungen/Winkel - das wäre
+ * für ein Echtzeit-Klick-Ergebnis weder nötig noch praxisgerecht, da real verlegte Rohre
+ * ohnehin nur in Waage/senkrecht/45° liegen, siehe pipe-alignment.js).
  *
  * Startrichtung an A = -markerA.xAxis (wie beim manuellen Routing). +X zeigt jeweils in
  * Richtung des vorhandenen (unmodellierten) Rohrs dahinter (siehe
@@ -17,9 +18,11 @@
  * Ankommen in +X, um sauber in einer Linie ins vorhandene Rohr überzugehen).
  *
  * VORGEHEN: `tryAutoRoute` bricht NICHT beim ersten Treffer ab, sondern sammelt Kandidaten
- * aus mehreren Strategien und gibt am Ende die mit der kürzesten Gesamtlänge zurück -
- * sonst wäre z.B. eine früh gefundene 3-Segment-Lösung nicht vergleichbar mit einer
- * eventuell kürzeren 2- oder 4-Segment-Alternative:
+ * aus mehreren Strategien und gibt am Ende die mit den WENIGSTEN Segmenten zurück (bei
+ * Gleichstand die kürzeste) - sonst wäre z.B. eine früh gefundene 3-Segment-Lösung nicht
+ * vergleichbar mit einer eventuell einfacheren 2-Segment-Alternative, und eine unnötig
+ * komplexe (aber zufällig minimal kürzere) 5-Segment-Lösung würde einer einfacheren
+ * 3-Segment-Lösung fälschlich vorgezogen:
  *
  *  1. Direkte gerade Verbindung (1 Segment) - falls anwendbar unschlagbar kurz (Luftlinie).
  *  2. Kollinearer Versatz (2×45°-Bogen mit geradem Zwischenstück) - die klassische Lösung
@@ -362,11 +365,17 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
   }
 
   if (!candidates.length) { log('Keine Lösung gefunden.'); return null; }
-  candidates.sort((a, b) => a.total - b.total);
+
+  // Wichtigstes Kriterium: so WENIGE Segmente (= Winkel/Bögen) wie möglich - eine
+  // 5-Segment-Lösung wird nie einer gültigen 3-Segment-Lösung vorgezogen, selbst wenn sie
+  // rechnerisch etwas kürzer wäre. Erst bei GLEICHER Segmentanzahl entscheidet die
+  // Gesamtlänge (kürzer ist dann besser).
+  candidates.sort((a, b) => a.steps.length - b.steps.length || a.total - b.total);
   const best = candidates[0];
   log(
     `Lösung: ${best.label}, ${best.steps.length} Segment(e), Gesamtlänge=`, best.total.toFixed(3),
-    `(kürzeste von ${candidates.length} verglichenen Kandidat(en): ${candidates.map((c) => c.total.toFixed(3)).join(', ')})`
+    `(wenigste Segmente/kürzeste von ${candidates.length} verglichenen Kandidat(en): ` +
+    `${candidates.map((c) => `${c.steps.length}×${c.total.toFixed(3)}`).join(', ')})`
   );
   return best.steps;
 }

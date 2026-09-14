@@ -76,6 +76,7 @@
  <button id="toggleCamView" title="Blick aus Sicht der Aufnahme-Kamera">📷</button>
  <button id="toggleMeasure" title="Messen: Versatz zweier Punkte in X/Y/Z">📏</button>
  <button id="toggleOrigAxes" title="Ursprüngliche (unkorrigierte) Rohrachsen zum Vergleich einblenden" style="display:none">🧭</button>
+ <button id="toggleAufmass" title="Aufmaß anzeigen (Längen &amp; Winkel ab Marker A)">📋</button>
  <span style="flex:1"></span>
  <button id="newPhoto" class="ghost" title="Neues Foto aufnehmen">↻ Neues Foto</button>
 </div>
@@ -83,10 +84,15 @@
 <div id="panel" style="display:none">
  <h2>Rohr verlegen</h2>
  <div class="step"><span class="num">1</span><div><b>Auto-Route probieren</b><div class="muted">Verbindet beide Rohrenden automatisch mit 90°/45°-Bögen.</div></div></div>
- <div class="step"><span class="num">2</span><div><b>Anpassen</b><div class="muted">Rohrende antippen, Richtung ziehen/tippen – jederzeit möglich.</div></div></div>
+ <div class="step"><span class="num">2</span><div><b>Anpassen</b><div class="muted">Weißen Punkt an einem Knick antippen: Route wird dort abgeschnitten, neue Richtung wählen. Weißen Punkt ziehen: Länge dieses Stücks ändern.</div></div></div>
  <div class="step"><span class="num">3</span><div><b>Segment erstellen</b><div class="muted">Gerade, 90° oder 45° wird automatisch erzeugt.</div></div></div>
  <hr style="border:0;border-top:1px solid var(--border)">
  <b>ArUco-Anschlüsse</b><div class="muted" id="markerInfo">Lade Marker …</div>
+</div>
+
+<div id="aufmassPanel" style="display:none">
+ <h2>Aufmaß <span class="muted" style="font-size:12px;font-weight:400">ab Marker A</span></h2>
+ <div id="aufmassList" class="muted">Noch keine Route verlegt.</div>
 </div>
 
 <div id="actionbar">

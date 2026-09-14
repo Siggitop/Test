@@ -51,6 +51,21 @@ function classifyTurn(oldDir, newDir) {
   return 'b90';
 }
 
+/** Klassischer "closest point of approach" zwischen zwei Geraden im Raum: liefert den
+ *  Parameter s, für den `linePoint + s*lineDir` dem `ray` am nächsten kommt (rayDir und
+ *  lineDir müssen normiert sein). Grundlage fürs Ziehen eines Wegpunkts entlang der
+ *  eigenen Rohrachse - der Bildschirmpunkt unter dem Finger/Mauszeiger wird so auf die
+ *  3D-Achse projiziert, unabhängig vom aktuellen Kamerawinkel. */
+function closestParamOnLine(rayOrigin, rayDir, linePoint, lineDir) {
+  const w0 = rayOrigin.clone().sub(linePoint);
+  const b = rayDir.dot(lineDir);
+  const d = rayDir.dot(w0);
+  const e = lineDir.dot(w0);
+  const denom = 1 - b * b;
+  if (Math.abs(denom) < 1e-9) return 0; // Blickrichtung ~parallel zur Achse - keine sinnvolle Projektion
+  return (e - b * d) / denom;
+}
+
 /** Vertikales FOV (Grad) für THREE.PerspectiveCamera, das der echten Aufnahmekamera
  *  entspricht - unabhängig davon, ob das Browserfenster (canvasAspect) ein anderes
  *  Seitenverhältnis hat als das Kalibrierfoto (K.imageWidth × K.imageHeight). Analog zu
@@ -156,6 +171,11 @@ export class PipeRoutingApp {
   _setupSceneObjects() {
     this.pipes = new THREE.Group(); this.scene.add(this.pipes);
     this.joints = new THREE.Group(); this.scene.add(this.joints);
+    // Kleine Punkte an jedem Wegpunkt der bestehenden Route (inkl. Endpunkt) zum
+    // nachträglichen Anpassen - anders als `joints` NICHT an den Gizmo-Sichtbarkeits-
+    // Knopf gekoppelt, damit die Route immer bearbeitbar bleibt, auch wenn die
+    // Richtungspfeile gerade ausgeblendet sind (siehe _drawWaypointHandles).
+    this.waypoints = new THREE.Group(); this.scene.add(this.waypoints);
     this.markersGroup = new THREE.Group(); this.scene.add(this.markersGroup);
     this.measureGroup = new THREE.Group(); this.scene.add(this.measureGroup);
     // Ghost-Visualisierung der ursprünglichen (unkorrigierten) Rohrachsen - nur befüllt
@@ -293,6 +313,32 @@ export class PipeRoutingApp {
       g.add(o);
     });
     this.joints.add(g);
+    this._drawWaypointHandles();
+  }
+
+  /** Kleine, IMMER (unabhängig vom Gizmo-Sichtbarkeits-Knopf) sichtbare Punkte an jedem
+   *  Wegpunkt der bisherigen Route - Grundlage fürs nachträgliche Anpassen: Antippen
+   *  schneidet die Route dort ab und bietet neue Richtungs-Griffe an (siehe
+   *  _editFromWaypoint), Ziehen entlang der Rohrachse verlängert/verkürzt das an diesem
+   *  Punkt endende Segment (siehe _applyWaypointDrag). Der letzte Wegpunkt fällt mit dem
+   *  großen Endpunkt-Handle oben zusammen - dort funktioniert dann beides: Ziehen zum
+   *  Verlängern/Verkürzen, Antippen einer der (nur bei sichtbarem Gizmo eingeblendeten)
+   *  Richtungspfeile zum Anfügen eines neuen Segments. */
+  _drawWaypointHandles() {
+    this.waypoints.clear();
+    let cur = this.markerA.position.clone();
+    this.history.forEach((seg, i) => {
+      cur = cur.clone().addScaledVector(seg.dir, seg.len);
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(this.ENDPOINT_R * 0.55, 14, 14),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.3, roughness: 0.5, depthTest: false })
+      );
+      dot.position.copy(cur);
+      dot.renderOrder = 9;
+      dot.userData.waypoint = true;
+      dot.userData.waypointIndex = i;
+      this.waypoints.add(dot);
+    });
   }
 
   // -- Routing --------------------------------------------------------------------
@@ -311,6 +357,7 @@ export class PipeRoutingApp {
     this.current.copy(end);
     this.direction.copy(dir).normalize();
     this._drawEndpointHandles(this.current);
+    this._updateAufmassPanel();
   }
 
   _addPipe(a, b) {
@@ -328,6 +375,7 @@ export class PipeRoutingApp {
     this.direction.copy(this.markerA.xAxis).normalize().negate();
     h.forEach((x) => this.addSegment(x.dir, x.mode, x.len));
     this._drawEndpointHandles(this.current);
+    this._updateAufmassPanel();
   }
 
   reset() {
@@ -336,6 +384,86 @@ export class PipeRoutingApp {
     this.current.copy(this.markerA.position);
     this.direction.copy(this.markerA.xAxis).normalize().negate();
     this._drawEndpointHandles(this.current);
+    this._updateAufmassPanel();
+  }
+
+  /** Zeichnet die komplette Route aus `this.history` neu (Positionen/Richtung werden neu
+   *  aufsummiert) - im Unterschied zu addSegment wird history NICHT verändert, nur die
+   *  Darstellung aktualisiert. Für Fälle, in denen sich eine BESTEHENDE Länge ändert
+   *  (Wegpunkt-Ziehen) statt ein neues Segment angehängt wird - danach verschieben sich
+   *  alle nachfolgenden Segmente automatisch mit (starr, gleiche eigene Richtung/Länge). */
+  _rebuildRoute() {
+    this.pipes.clear();
+    this.current = this.markerA.position.clone();
+    this.direction = this.markerA.xAxis.clone().normalize().negate();
+    this.history.forEach((seg) => {
+      const end = this.current.clone().addScaledVector(seg.dir, seg.len);
+      this._addPipe(this.current, end);
+      this.current.copy(end);
+      this.direction.copy(seg.dir).normalize();
+    });
+  }
+
+  /** Schneidet die Route direkt nach Wegpunkt `index` ab und zeigt dort die
+   *  Richtungs-Griffe an, damit der Rest neu verlegt werden kann - das eigentliche
+   *  "nachträglich anpassen": Route an beliebiger Stelle antippen statt nur am Ende. */
+  _editFromWaypoint(index) {
+    this.history = this.history.slice(0, index + 1);
+    this._rebuildRoute();
+    this._drawEndpointHandles(this.current);
+    this._updateAufmassPanel();
+  }
+
+  /** Verlängert/verkürzt das an Wegpunkt `index` endende Segment, indem der aktuelle
+   *  Bildschirmpunkt (aus `pointerEvent`) auf die 3D-Achse dieses Segments projiziert
+   *  wird (siehe closestParamOnLine) - der vorherige Wegpunkt bleibt fest, alle
+   *  nachfolgenden Segmente verschieben sich starr mit (eigene Richtung/Länge bleibt
+   *  unverändert). Läuft bei jedem pointermove neu, konvergiert dadurch von selbst exakt
+   *  auf die Zeigerposition, egal wie viele Zwischenschritte es gab. */
+  _applyWaypointDrag(index, pointerEvent) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const x = ((pointerEvent.clientX - r.left) / r.width) * 2 - 1;
+    const y = -((pointerEvent.clientY - r.top) / r.height) * 2 + 1;
+    this.mouse.set(x, y);
+    this.ray.setFromCamera(this.mouse, this.camera);
+
+    let jointPos = this.markerA.position.clone();
+    for (let i = 0; i < index; i++) jointPos.addScaledVector(this.history[i].dir, this.history[i].len);
+    const dir = this.history[index].dir.clone().normalize();
+    jointPos.addScaledVector(dir, this.history[index].len);
+
+    const s = closestParamOnLine(this.ray.ray.origin, this.ray.ray.direction, jointPos, dir);
+    this.history[index].len = Math.max(this.history[index].len + s, this.MIN_SEG);
+    this._rebuildRoute();
+    this._drawEndpointHandles(this.current);
+    this._updateAufmassPanel();
+  }
+
+  /** Berechnet die Liste aus Längen (cm) und Zwischenwinkeln (°), abwechselnd ab Marker A -
+   *  z.B. [10cm, 90°, 20cm, 45°, 5cm]. null, wenn noch keine Route existiert. */
+  _computeAufmass() {
+    if (!this.history.length) return null;
+    const parts = [];
+    this.history.forEach((seg, i) => {
+      parts.push({ type: 'len', cm: seg.len * 100 });
+      if (i < this.history.length - 1) {
+        const angleDeg = THREE.MathUtils.radToDeg(seg.dir.angleTo(this.history[i + 1].dir));
+        parts.push({ type: 'ang', deg: angleDeg });
+      }
+    });
+    return parts;
+  }
+
+  /** Aktualisiert das Aufmaß-Panel (nur die Textliste - egal ob gerade sichtbar oder
+   *  nicht, damit sie beim nächsten Einblenden schon aktuell ist). */
+  _updateAufmassPanel() {
+    const listEl = document.getElementById('aufmassList');
+    if (!listEl) return;
+    const parts = this._computeAufmass();
+    if (!parts) { listEl.textContent = 'Noch keine Route verlegt.'; return; }
+    listEl.innerHTML = parts.map((p) => (
+      p.type === 'len' ? `<span class="len">${p.cm.toFixed(1)} cm</span>` : `<span class="ang">${Math.round(p.deg)}°</span>`
+    )).join('<span class="sep">, </span>');
   }
 
   autoRoute() {
@@ -385,6 +513,15 @@ export class PipeRoutingApp {
         toggleOrigAxesBtn.classList.toggle('active', this.origAxesGroup.visible);
       };
     }
+
+    const aufmassPanelEl = document.getElementById('aufmassPanel');
+    const toggleAufmassBtn = document.getElementById('toggleAufmass');
+    toggleAufmassBtn.onclick = () => {
+      const visible = aufmassPanelEl.style.display === 'none';
+      aufmassPanelEl.style.display = visible ? '' : 'none';
+      toggleAufmassBtn.classList.toggle('active', visible);
+      if (visible) this._updateAufmassPanel();
+    };
 
     this._defaultHint = 'Maus: Orbit · Mausrad: Zoom · Touch: 1 Finger Routing / 2 Finger Kamera';
 
@@ -537,6 +674,11 @@ export class PipeRoutingApp {
     // ob es ein Tippen (Messpunkt setzen) oder ein Ziehen (Kamera drehen) war.
     this._measureDownPos = null;
     const MEASURE_CLICK_MAX_MOVE = 6; // Pixel
+    // Analoge Tippen/Ziehen-Unterscheidung fürs nachträgliche Anpassen der Route: erst am
+    // pointerup entscheiden, ob antippen (Route hier abschneiden) oder ziehen (Segment
+    // verlängern/verkürzen) gemeint war - siehe _editFromWaypoint/_applyWaypointDrag.
+    this._waypointDrag = null;
+    const WAYPOINT_CLICK_MAX_MOVE = 6; // Pixel
 
     const pick = (e) => {
       // THREE.Raycaster prüft .visible NICHT selbst - bei ausgeblendetem Gizmo würden
@@ -550,6 +692,20 @@ export class PipeRoutingApp {
       this.ray.setFromCamera(this.mouse, this.camera);
       const hit = this.ray.intersectObjects(this.joints.children, true).find((x) => x.object.userData.route);
       return hit?.object.userData.dir || null;
+    };
+
+    // Wegpunkt-Auswahl (nachträgliches Anpassen): bewusst UNABHÄNGIG vom Gizmo-
+    // Sichtbarkeits-Knopf (kein `!this.joints.visible`-Check wie oben bei `pick`) - die
+    // Route soll immer bearbeitbar sein, auch wenn die Richtungspfeile gerade
+    // ausgeblendet sind.
+    const pickWaypoint = (e) => {
+      const r = this.renderer.domElement.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      const y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      this.mouse.set(x, y);
+      this.ray.setFromCamera(this.mouse, this.camera);
+      const hit = this.ray.intersectObjects(this.waypoints.children, true).find((x) => x.object.userData.waypoint);
+      return hit ? hit.object.userData.waypointIndex : null;
     };
 
     // Messpunkt-Auswahl: trifft Rohre/Bögen, Marker-Kugeln und die horizontale
@@ -615,7 +771,16 @@ export class PipeRoutingApp {
         const d = pick(e);
         if (d) {
           this.draggingRoute = true; this._setControlsEnabled(false); this.addSegment(d);
-        } else if (this.inCameraView) {
+          return;
+        }
+        const wpIndex = pickWaypoint(e);
+        if (wpIndex != null) {
+          this._waypointDrag = { index: wpIndex, startX: e.clientX, startY: e.clientY, moved: false };
+          this._setControlsEnabled(false);
+          this.renderer.domElement.setPointerCapture(e.pointerId);
+          return;
+        }
+        if (this.inCameraView) {
           this._lookDragging = true;
           this._lookLast.x = e.clientX; this._lookLast.y = e.clientY;
           this.renderer.domElement.setPointerCapture(e.pointerId);
@@ -652,10 +817,27 @@ export class PipeRoutingApp {
         }
         return;
       }
+      if (this._waypointDrag) {
+        // Kaum Bewegung seit pointerdown -> Tippen (Route hier abschneiden, neu
+        // ausrichten). Deutliche Bewegung -> war bereits während pointermove als Ziehen
+        // (Länge anpassen) behandelt, hier nur noch aufräumen.
+        const moved = Math.hypot(e.clientX - this._waypointDrag.startX, e.clientY - this._waypointDrag.startY);
+        const index = this._waypointDrag.index;
+        this._waypointDrag = null;
+        this._setControlsEnabled(true);
+        this.renderer.domElement.releasePointerCapture(e.pointerId);
+        if (moved <= WAYPOINT_CLICK_MAX_MOVE) this._editFromWaypoint(index);
+        return;
+      }
       endTouch(e);
     });
     this.renderer.domElement.addEventListener('pointercancel', (e) => {
       this._measureDownPos = null;
+      if (this._waypointDrag) {
+        this._waypointDrag = null;
+        this._setControlsEnabled(true);
+        this.renderer.domElement.releasePointerCapture(e.pointerId);
+      }
       endTouch(e);
     });
     this.renderer.domElement.addEventListener('pointermove', (e) => {
@@ -674,6 +856,14 @@ export class PipeRoutingApp {
       if (this._lookDragging) {
         applyLook(e.clientX - this._lookLast.x, e.clientY - this._lookLast.y);
         this._lookLast.x = e.clientX; this._lookLast.y = e.clientY;
+        return;
+      }
+      if (this._waypointDrag) {
+        if (!this._waypointDrag.moved) {
+          const moved = Math.hypot(e.clientX - this._waypointDrag.startX, e.clientY - this._waypointDrag.startY);
+          if (moved > WAYPOINT_CLICK_MAX_MOVE) this._waypointDrag.moved = true;
+        }
+        if (this._waypointDrag.moved) this._applyWaypointDrag(this._waypointDrag.index, e);
         return;
       }
       if (!this.draggingRoute) return;

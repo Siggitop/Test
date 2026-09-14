@@ -66,6 +66,19 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   max-height: calc(100vh - 90px); overflow-y: auto;
 }
 #panel h2 { margin: 0 0 18px; font-size: 20px; }
+
+#aufmassPanel {
+  position: fixed; left: 12px; top: 64px; width: 260px; max-width: calc(100vw - 24px);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 15px;
+  padding: 18px; z-index: 5; box-sizing: border-box;
+  box-shadow: 0 6px 24px rgba(30, 45, 70, .08);
+  max-height: calc(100vh - 90px); overflow-y: auto;
+}
+#aufmassPanel h2 { margin: 0 0 12px; font-size: 17px; }
+#aufmassList { font-size: 14px; line-height: 1.9; font-variant-numeric: tabular-nums; }
+#aufmassList .len { color: var(--text); font-weight: 700; }
+#aufmassList .ang { color: var(--accent); font-weight: 700; }
+#aufmassList .sep { color: var(--muted); }
 .step { display: flex; gap: 12px; margin: 13px 0; }
 .num {
   min-width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
@@ -111,6 +124,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 @media (max-width: 480px) {
   #panel { right: 8px; left: 8px; width: auto; top: 60px; padding: 14px; }
+  #aufmassPanel { right: 8px; left: 8px; width: auto; top: 60px; padding: 14px; }
   .step { margin: 8px 0; }
   .muted { font-size: 11px; }
   #top button { width: 38px; height: 38px; font-size: 15px; }
