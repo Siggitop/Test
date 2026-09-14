@@ -57,9 +57,14 @@ export function setupHorizontalPlane(scene, markerA, markerB, gravityDownCv, cvT
 
   const tableNormal = cvToThree(gravityDownCv).normalize();
 
-  // Darf ruhig 1m unterhalb der Marker liegen (dient nur als Referenz für "waagerecht",
-  // nicht als exakte reale Standfläche) - tableNormal zeigt bereits nach unten.
-  const planeCenter = midAB.clone().add(tableNormal.clone().multiplyScalar(1.0));
+  // Nur knapp unterhalb der Marker (dient nur als Referenz für "waagerecht", nicht als
+  // exakte reale Standfläche) - tableNormal zeigt nach unten, also positiver Versatz.
+  // Erscheint die Ebene trotzdem oberhalb der Marker, liegt das nicht an dieser Formel,
+  // sondern daran, dass der Schwerkraftsensor auf dem jeweiligen Gerät genau umgekehrt
+  // meldet - dann das Vorzeichen in gravity.js (deviceAccelToCameraFrame /
+  // currentGravityDown) tauschen, nicht hier.
+  const PLANE_OFFSET = THREE.MathUtils.clamp(unit * 0.05, 0.01, 0.1);
+  const planeCenter = midAB.clone().add(tableNormal.clone().multiplyScalar(PLANE_OFFSET));
   const planeSize = Math.max(markerDist * 6, 0.3);
   const gridQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tableNormal);
 
