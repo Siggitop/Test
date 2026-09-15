@@ -14,8 +14,19 @@
  *   Berechtigung, keine Kamera vorhanden) - der Aufrufer zeigt die Fehlermeldung an.
  */
 export async function startCamera(videoEl) {
+  // width/height sind nur "ideal" (unverbindliche Wünsche, kein Fehlschlag bei
+  // Nichterreichen) - hier bewusst hoch angesetzt (deutlich über 1920x1080), damit der
+  // Browser die höchste vom Gerät gebotene Stream-Auflösung liefert, statt sich an einer
+  // konservativen Vorgabe zu orientieren. Grund: eine niedrige Stream-Auflösung
+  // (z.B. 1080x1920) weicht im Seitenverhältnis/Auflösung typischerweise deutlich von
+  // separat aufgenommenen, hochauflösenden Kalibrierfotos (z.B. 3024x4032) ab - das
+  // erzwingt bei npz-loader.js/applyCalibration() eine ungenaue Umrechnung und damit einen
+  // systematischen Tiefenfehler. Eine höhere Stream-Auflösung reduziert diesen Abstand
+  // (und verbessert nebenbei die Eckenerkennung selbst). Die Browser-Orientierung
+  // (Hoch-/Querformat) übernimmt der Browser automatisch passend zum Gerät - welche Zahl
+  // hier "width" heißt, spielt dafür keine Rolle.
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 4032 }, height: { ideal: 3024 } },
     audio: false,
   });
   videoEl.srcObject = stream;
