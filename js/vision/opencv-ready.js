@@ -15,6 +15,12 @@ export const cvReady = new Promise((resolve) => {
   // sein, dass onRuntimeInitialized bereits gefeuert hat, BEVOR dieses (als type="module"
   // erst nach den klassischen Scripts ausgeführte) Modul überhaupt läuft. cv.Mat dient als
   // zuverlässiger Indikator, ob das schon passiert ist.
-  if (cv.Mat) { resolve(cv); return; }
-  cv.onRuntimeInitialized = () => resolve(cv);
+  //
+  // WICHTIG: bewusst ohne Argument auflösen (resolve(), nicht resolve(cv))! Das riesige,
+  // WASM-gebundene cv-Objekt als Erfüllungswert einer Promise zu übergeben hat sich als
+  // zuverlässiger Hänger erwiesen (die Promise-Maschinerie prüft dafür typeof cv.then,
+  // was auf diesem Objekt offenbar pathologisch teuer/blockierend ist). cv bleibt ohnehin
+  // ein globales Objekt - kein Grund, es zusätzlich als Wert durchzureichen.
+  if (cv.Mat) { resolve(); return; }
+  cv.onRuntimeInitialized = () => resolve();
 });
