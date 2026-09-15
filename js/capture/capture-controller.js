@@ -162,25 +162,34 @@ export function initCaptureFlow(onMarkerData) {
    *  Browsers) an, statt nur pauschal zu warnen - das lässt sich damit direkt nachprüfen. */
   function loadDefaultCalibration() {
     fetch('assets/default-calib.npz')
-      .then((r) => (r.ok ? r.blob() : Promise.reject()))
-      .then((blob) => loadCalibrationNpz(blob))
-      .then((loaded) => {
-        const { fx, fy, hasDist, aspectMismatch, imageWidth, imageHeight, streamW, streamH } = applyCalibration(loaded);
-        if (aspectMismatch) {
-          showCalibSummary(
-            `✓ assets/default-calib.npz geladen (fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}). Kalibrierfotos: ` +
-            `${imageWidth}×${imageHeight} · dieser Kamerastream: ${streamW}×${streamH} - unterschiedliches ` +
-            'Seitenverhältnis, Tiefe/Höhe evtl. systematisch verfälscht.',
-            false
-          );
-        } else {
-          showCalibSummary(
-            `✓ assets/default-calib.npz geladen: fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}` +
-            (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ' (keine Verzeichnung in der Datei)')
-          );
-        }
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        // Datei fehlt (z.B. nicht mitgeliefert) -> das ist der vorgesehene Normalfall,
+        // grobe Schätzung bleibt still aktiv. Alles danach ist dagegen ein ECHTER Fehler
+        // (kaputte Datei, Bug) und muss sichtbar sein statt lautlos zu verschwinden -
+        // sonst sieht man im UI schlicht nichts und weiß nicht, woran es liegt.
+        if (!blob) return;
+        return loadCalibrationNpz(blob).then((loaded) => {
+          const { fx, fy, hasDist, aspectMismatch, imageWidth, imageHeight, streamW, streamH } = applyCalibration(loaded);
+          if (aspectMismatch) {
+            showCalibSummary(
+              `✓ assets/default-calib.npz geladen (fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}). Kalibrierfotos: ` +
+              `${imageWidth}×${imageHeight} · dieser Kamerastream: ${streamW}×${streamH} - unterschiedliches ` +
+              'Seitenverhältnis, Tiefe/Höhe evtl. systematisch verfälscht.',
+              false
+            );
+          } else {
+            showCalibSummary(
+              `✓ assets/default-calib.npz geladen: fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}` +
+              (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ' (keine Verzeichnung in der Datei)')
+            );
+          }
+        });
       })
-      .catch(() => {}); // keine mitgelieferte Standard-Kalibrierung -> grobe Schätzung bleibt aktiv
+      .catch((err) => {
+        console.error('Standard-Kalibrierung konnte nicht geladen werden:', err);
+        showCalibSummary('Standard-.npz vorhanden, aber Laden fehlgeschlagen: ' + err.message + ' - grobe Schätzung aktiv.', false);
+      });
   }
 
   // --- Kalibrierungs-Tabs ---------------------------------------------------

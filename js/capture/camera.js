@@ -20,6 +20,23 @@ export async function startCamera(videoEl) {
   });
   videoEl.srcObject = stream;
   await videoEl.play();
+
+  // Kontinuierlichen Autofokus explizit anfordern, falls Gerät/Browser das unterstützt
+  // (kein Teil der ursprünglichen getUserMedia-Constraints oben, sonst bricht die ganze
+  // Anfrage auf Geräten ohne Unterstützung mit OverconstrainedError ab - deshalb per
+  // Capability-Check + separatem applyConstraints() danach, und defensiv mit try/catch).
+  // Ohne das kann die Kamera je nach Gerät/Standardeinstellung beim Nahbereich-Fotografieren
+  // der Marker unscharf bleiben (z.B. wenn der Video-Modus auf Fixfokus/Unendlich steht).
+  const [track] = stream.getVideoTracks();
+  const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+  if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+    } catch (err) {
+      console.warn('Kontinuierlicher Autofokus konnte nicht aktiviert werden:', err);
+    }
+  }
+
   return stream;
 }
 
