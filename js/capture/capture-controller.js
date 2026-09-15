@@ -118,23 +118,29 @@ export function initCaptureFlow(onMarkerData) {
 
   /**
    * Übernimmt eine geladene .npz-Kalibrierung (Datei-Upload oder mitgelieferte
-   * Standard-Datei) in die Kalibrierfelder. Die K.npy-Werte stammen typischerweise von
-   * separaten, in voller Auflösung aufgenommenen Kalibrierfotos (z.B. 3024×4032) - der
-   * Kamerastream hier läuft aber meist in einer anderen Auflösung (z.B. 1920×1080).
+   * Standard-Datei) in die Kalibrierfelder. Die K.npy-Werte stammen von Kalibrierfotos
+   * einer bestimmten Auflösung (imageWidth×imageHeight, in der .npz-Datei gespeichert) -
+   * der aktuelle Kamerastream läuft aber möglicherweise in einer anderen Auflösung
+   * (video.videoWidth×video.videoHeight, was der Browser tatsächlich liefert, NICHT die
+   * `ideal`-Wunschwerte aus camera.js - die sind nur ein Vorschlag, kein Ergebnis).
    * fx/fy/cx/cy sind Pixelgrößen und müssen deshalb proportional auf die tatsächliche
    * Stream-Auflösung skaliert werden, sonst stimmen Pose-Berechnung und (davon abgeleitet)
-   * die Kamerasicht-Perspektive nicht mit der Realität überein.
+   * die Kamerasicht-Perspektive nicht mit der Realität überein. Diese Skalierung ist nur
+   * bei reiner Größenänderung (gleiches Seitenverhältnis) exakt - weicht das
+   * Seitenverhältnis deutlich ab, wird die Differenz unten mit den ECHTEN gemessenen
+   * Zahlen angezeigt, statt nur zu behaupten, dass etwas nicht passt.
    */
   function applyCalibration({ fx, fy, cx, cy, dist, hasDist, imageWidth, imageHeight }) {
     let aspectMismatch = false;
-    if (imageWidth && imageHeight && video.videoWidth && video.videoHeight) {
-      const sx = video.videoWidth / imageWidth;
-      const sy = video.videoHeight / imageHeight;
+    const streamW = video.videoWidth, streamH = video.videoHeight;
+    if (imageWidth && imageHeight && streamW && streamH) {
+      const sx = streamW / imageWidth;
+      const sy = streamH / imageHeight;
       if (Math.abs(sx / sy - 1) > 0.15) {
         aspectMismatch = true;
         console.warn(
           `Kalibrierung: Seitenverhältnis der Kalibrierfotos (${imageWidth}×${imageHeight}) weicht ` +
-          `deutlich vom Kamerastream (${video.videoWidth}×${video.videoHeight}) ab - Skalierung evtl. ungenau.`
+          `deutlich vom Kamerastream (${streamW}×${streamH}) ab - Skalierung evtl. ungenau.`
         );
       }
       fx *= sx; cx *= sx;
@@ -142,7 +148,7 @@ export function initCaptureFlow(onMarkerData) {
     }
     setCalibFields(fx, fy, cx, cy);
     calibDist = dist;
-    return { fx, fy, cx, cy, hasDist, aspectMismatch };
+    return { fx, fy, cx, cy, hasDist, aspectMismatch, imageWidth, imageHeight, streamW, streamH };
   }
 
   /** Lädt beim Start automatisch assets/default-calib.npz, falls vorhanden - so ist die
@@ -151,22 +157,20 @@ export function initCaptureFlow(onMarkerData) {
    *  danach jederzeit wieder.
    *
    *  Meldet den Erfolg deutlich sichtbar (nicht nur in der Konsole), inkl. der geladenen
-   *  fx/fy-Werte zur Kontrolle. Warnt zusätzlich, wenn schon allein das Seitenverhältnis
-   *  von Kalibrierfoto und aktuellem Kamerastream nicht zusammenpasst - das ist unabhängig
-   *  davon, von welchem Gerät die Datei stammt, ein Hinweis auf einen SYSTEMATISCHEN
-   *  (durch Mehrbild-Fusion nicht ausgleichbaren) Tiefenfehler, z.B. sichtbar als
-   *  Höhenversatz zweier eigentlich koplanarer Marker. */
+   *  fx/fy-Werte zur Kontrolle. Zeigt bei einem Seitenverhältnis-Unterschied die ECHTEN
+   *  gemessenen Auflösungen (Kalibrierfoto vs. tatsächlicher Kamerastream dieses Geräts/
+   *  Browsers) an, statt nur pauschal zu warnen - das lässt sich damit direkt nachprüfen. */
   function loadDefaultCalibration() {
     fetch('assets/default-calib.npz')
       .then((r) => (r.ok ? r.blob() : Promise.reject()))
       .then((blob) => loadCalibrationNpz(blob))
       .then((loaded) => {
-        const { fx, fy, hasDist, aspectMismatch } = applyCalibration(loaded);
+        const { fx, fy, hasDist, aspectMismatch, imageWidth, imageHeight, streamW, streamH } = applyCalibration(loaded);
         if (aspectMismatch) {
           showCalibSummary(
-            `✓ assets/default-calib.npz geladen (fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}), passt aber im ` +
-            'Seitenverhältnis nicht zum aktuellen Kamerastream - Tiefe/Höhe evtl. systematisch verfälscht. ' +
-            'Falls das nicht die Kalibrierung dieses Geräts ist: eigene erstellen (Tab ".npz" oder "Kalibrierblatt").',
+            `✓ assets/default-calib.npz geladen (fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}). Kalibrierfotos: ` +
+            `${imageWidth}×${imageHeight} · dieser Kamerastream: ${streamW}×${streamH} - unterschiedliches ` +
+            'Seitenverhältnis, Tiefe/Höhe evtl. systematisch verfälscht.',
             false
           );
         } else {
@@ -205,9 +209,9 @@ export function initCaptureFlow(onMarkerData) {
     if (!file) return;
     try {
       const loaded = await loadCalibrationNpz(file);
-      const { fx, fy, cx, cy, hasDist, aspectMismatch } = applyCalibration(loaded);
+      const { fx, fy, cx, cy, hasDist, aspectMismatch, imageWidth, imageHeight, streamW, streamH } = applyCalibration(loaded);
       statusEl.innerHTML = `<span style="color:#7be0b0">✓ geladen: fx=${fx.toFixed(1)} fy=${fy.toFixed(1)} cx=${cx.toFixed(1)} cy=${cy.toFixed(1)}${hasDist ? ' · Verzeichnung inklusive' : ' · keine Verzeichnung in der Datei gefunden'}</span>` +
-        (aspectMismatch ? '<br><span class="errText">⚠ Seitenverhältnis der Kalibrierfotos passt nicht zum Kamerastream - falsche Datei? Genauigkeit eingeschränkt.</span>' : '');
+        (aspectMismatch ? `<br><span class="errText">⚠ Kalibrierfotos ${imageWidth}×${imageHeight} vs. Kamerastream ${streamW}×${streamH} - unterschiedliches Seitenverhältnis, Genauigkeit eingeschränkt.</span>` : '');
       showCalibSummary(
         'Aktive Kalibrierung: .npz-Datei' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ''),
         !aspectMismatch
