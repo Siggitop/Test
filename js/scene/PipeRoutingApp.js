@@ -205,8 +205,18 @@ export class PipeRoutingApp {
     this.tableNormal = tableNormal;
     this.horizontalPlaneMesh = planeMesh;
 
+    // Versatz von B gegenüber A entlang der echten (Schwerkraft-)Vertikalen, nicht entlang
+    // der rohen Three.js-Y-Achse - sonst würde ein beim Fotografieren schräg gehaltenes
+    // Handy einen Versatz vortäuschen, der real gar nicht existiert. tableNormal zeigt
+    // nach unten (siehe horizontal-plane.js), das Vorzeichen ist daher ohne Belang - nur
+    // der Betrag interessiert hier.
+    const heightOffsetCm = usedGravity
+      ? Math.abs(new THREE.Vector3().subVectors(markerB.position, markerA.position).dot(tableNormal)) * 100
+      : null;
+
     document.getElementById('markerInfo').textContent =
       `Start: Marker ${markerA.id} · Ziel: Marker ${markerB.id} · Abstand ${(markerDist * 100).toFixed(1)} cm` +
+      (heightOffsetCm != null ? ` · Höhenversatz ${heightOffsetCm.toFixed(1)} cm` : '') +
       (usedGravity ? ' · Horizontale aus Schwerkraft-Sensor' : ' · keine Horizontale (Sensor war bei der Aufnahme nicht verfügbar)') +
       (this.alignmentCorrection
         ? ` · Rohrachsen korrigiert (A Δ${this.alignmentCorrection.angleChangeADeg.toFixed(1)}° · B Δ${this.alignmentCorrection.angleChangeBDeg.toFixed(1)}°)`

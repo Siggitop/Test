@@ -19,10 +19,10 @@ js/main.js                       Einstiegspunkt: verdrahtet alles miteinander
 
 js/vision/                       Bilderkennung & Pose-Schätzung (kein DOM-Zugriff)
   linalg.js                        Vektor-/Matrix-Hilfsfunktionen, Gauß-Elimination
-  dictionary-6x6-250-data.js       Rohdaten des echten OpenCV DICT_6X6_250
-  aruco-setup.js                   Registriert das Dictionary bei js-aruco2
-  detection.js                     Mehrskalen-Markererkennung
-  pose-estimation.js               Homographie, Entzerrung, Posen-Schätzung
+  opencv-ready.js                  Wartet auf die asynchrone opencv.js-WASM-Initialisierung
+  detection.js                     ArUco-Erkennung über opencv.js (ArucoDetector)
+  pose-estimation.js               Posen-Schätzung über opencv.js (solvePnP/IPPE_SQUARE)
+  multi-view-fusion.js             Fusioniert 1-3 Fotos zu einer robusteren Marker-Geometrie
 
 js/calibration/                  Kamera-Kalibrierung
   npz-loader.js                    ZIP+NPY-Parser für camera_calib.npz
@@ -89,16 +89,16 @@ Demo-Daten-Flow durchspielen, Konsole beobachten).
 
 ## Bekannte Einschränkungen (bewusst, mit Fundstelle im Code)
 
-- **Markererkennung ist einfacher als OpenCV.** `js-aruco2` (die Browser-Bibliothek)
-  hat einen deutlich simpleren, fest verdrahteten Schwellwert-Filter statt OpenCVs
-  mehrstufiger, robusterer Pipeline. `js/vision/detection.js` gleicht das teilweise durch
-  eine Mehrskalen-Suche aus, ist aber kein vollwertiger Ersatz.
-- **DICT_6X6_250-Bitreihenfolge nicht an echter Hardware getestet.** Die Codes in
-  `dictionary-6x6-250-data.js` wurden bit-genau aus dem OpenCV-Quellcode extrahiert und
-  die minimale Hamming-Distanz (11) stimmt exakt mit OpenCVs dokumentiertem Wert überein
-  - ein starkes Indiz für Korrektheit, aber kein Test an einem echten Foto mit echtem
-  ausgedrucktem Marker in dieser Entwicklungsumgebung. Siehe Kommentar dort für den ersten
-  Verdachtspunkt, falls doch nichts erkannt wird.
+- **Die mitgelieferte `assets/default-calib.npz` stammt von einem fremden Testgerät**,
+  nicht vom Gerät der Nutzerin/des Nutzers. Andere Brennweite, anderer Bildmittelpunkt und
+  vor allem andere Verzeichnungskoeffizienten führen zu einem SYSTEMATISCHEN (durch
+  Mehrbild-Fusion, `js/vision/multi-view-fusion.js`, NICHT ausgleichbaren) Tiefenfehler -
+  zeigt sich z.B. als Höhenversatz zweier eigentlich koplanarer Marker (jetzt als
+  "Höhenversatz" in der Infotafel sichtbar, `PipeRoutingApp.js`). `capture-controller.js`
+  warnt sichtbar (nicht nur in der Konsole), wenn schon das Seitenverhältnis von
+  Kalibrierfoto und Kamerastream nicht zusammenpasst - ein starkes Indiz für genau dieses
+  Problem. Für belastbare Tiefe/Höhe eine eigene `.npz`-Kalibrierung für das tatsächlich
+  genutzte Gerät erstellen.
 - **Kalibrierblatt schätzt keine Verzeichnung.** `calibration-sheet.js` liefert nur
   fx/fy + angenommene Bildmitte (Fluchtpunkt-Methode aus einer einzigen Ansicht). Für
   Verzeichnungskorrektur: `.npz`-Weg mit echter OpenCV-Kalibrierung nutzen.

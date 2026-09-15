@@ -126,10 +126,12 @@ export function initCaptureFlow(onMarkerData) {
    * die Kamerasicht-Perspektive nicht mit der Realität überein.
    */
   function applyCalibration({ fx, fy, cx, cy, dist, hasDist, imageWidth, imageHeight }) {
+    let aspectMismatch = false;
     if (imageWidth && imageHeight && video.videoWidth && video.videoHeight) {
       const sx = video.videoWidth / imageWidth;
       const sy = video.videoHeight / imageHeight;
       if (Math.abs(sx / sy - 1) > 0.15) {
+        aspectMismatch = true;
         console.warn(
           `Kalibrierung: Seitenverhältnis der Kalibrierfotos (${imageWidth}×${imageHeight}) weicht ` +
           `deutlich vom Kamerastream (${video.videoWidth}×${video.videoHeight}) ab - Skalierung evtl. ungenau.`
@@ -140,20 +142,40 @@ export function initCaptureFlow(onMarkerData) {
     }
     setCalibFields(fx, fy, cx, cy);
     calibDist = dist;
-    return { fx, fy, cx, cy, hasDist };
+    return { fx, fy, cx, cy, hasDist, aspectMismatch };
   }
 
   /** Lädt beim Start automatisch assets/default-calib.npz, falls vorhanden - so ist die
    *  App direkt mit einer echten Kalibrierung nutzbar, ohne dass die Datei jedes Mal von
    *  Hand ausgewählt werden muss. Eine manuelle Auswahl (Tab ".npz") überschreibt das
-   *  danach jederzeit wieder. */
+   *  danach jederzeit wieder.
+   *
+   *  WICHTIG: diese Standard-Datei stammt von genau EINEM konkreten Handy, nicht vom
+   *  Gerät der aktuellen Nutzerin/des aktuellen Nutzers - andere Brennweite, anderer
+   *  Bildmittelpunkt und vor allem andere Verzeichnungskoeffizienten führen zu einem
+   *  SYSTEMATISCHEN (nicht durch Mehrbild-Fusion ausgleichbaren) Tiefenfehler, der sich
+   *  z.B. als Höhenversatz zweier eigentlich koplanarer Marker zeigt. Deshalb hier klar
+   *  sichtbar (nicht nur in der Konsole) darauf hinweisen, wenn schon allein das
+   *  Seitenverhältnis von Kalibrierfoto und Kamerastream nicht zusammenpasst - ein starkes
+   *  Indiz dafür, dass diese Kalibrierung nicht zum tatsächlich genutzten Gerät passt. */
   function loadDefaultCalibration() {
     fetch('assets/default-calib.npz')
       .then((r) => (r.ok ? r.blob() : Promise.reject()))
       .then((blob) => loadCalibrationNpz(blob))
       .then((loaded) => {
-        const { hasDist } = applyCalibration(loaded);
-        showCalibSummary('Aktive Kalibrierung: Standard-.npz' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ''));
+        const { hasDist, aspectMismatch } = applyCalibration(loaded);
+        if (aspectMismatch) {
+          showCalibSummary(
+            'Standard-.npz aktiv, passt aber nicht zu diesem Kamerastream (anderes Seitenverhältnis) - ' +
+            'stammt von einem anderen Gerät. Für genaue Tiefe/Höhe eigene Kalibrierung nutzen (Tab ".npz" ' +
+            'oder "Kalibrierblatt").', false
+          );
+        } else {
+          showCalibSummary(
+            'Aktive Kalibrierung: Standard-.npz' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : '') +
+            ' - stammt von einem anderen Gerät, für beste Genauigkeit eigene Kalibrierung nutzen.'
+          );
+        }
       })
       .catch(() => {}); // keine mitgelieferte Standard-Kalibrierung -> grobe Schätzung bleibt aktiv
   }
@@ -184,9 +206,13 @@ export function initCaptureFlow(onMarkerData) {
     if (!file) return;
     try {
       const loaded = await loadCalibrationNpz(file);
-      const { fx, fy, cx, cy, hasDist } = applyCalibration(loaded);
-      statusEl.innerHTML = `<span style="color:#7be0b0">✓ geladen: fx=${fx.toFixed(1)} fy=${fy.toFixed(1)} cx=${cx.toFixed(1)} cy=${cy.toFixed(1)}${hasDist ? ' · Verzeichnung inklusive' : ' · keine Verzeichnung in der Datei gefunden'}</span>`;
-      showCalibSummary('Aktive Kalibrierung: .npz-Datei' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ''));
+      const { fx, fy, cx, cy, hasDist, aspectMismatch } = applyCalibration(loaded);
+      statusEl.innerHTML = `<span style="color:#7be0b0">✓ geladen: fx=${fx.toFixed(1)} fy=${fy.toFixed(1)} cx=${cx.toFixed(1)} cy=${cy.toFixed(1)}${hasDist ? ' · Verzeichnung inklusive' : ' · keine Verzeichnung in der Datei gefunden'}</span>` +
+        (aspectMismatch ? '<br><span class="errText">⚠ Seitenverhältnis der Kalibrierfotos passt nicht zum Kamerastream - falsche Datei? Genauigkeit eingeschränkt.</span>' : '');
+      showCalibSummary(
+        'Aktive Kalibrierung: .npz-Datei' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ''),
+        !aspectMismatch
+      );
     } catch (err) {
       statusEl.innerHTML = `<span class="errText">Fehler: ${err.message}</span>`;
     }
