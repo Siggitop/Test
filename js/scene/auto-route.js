@@ -296,9 +296,43 @@ export function tryAutoRoute(markerA, markerB, unit, minSegmentLength) {
   // kürzesten Gesamtlänge zurückgegeben. Nur so ist "kürzestmöglich" (innerhalb des
   // abgesuchten Raums) tatsächlich garantiert: eine früh gefundene 3-Segment-Lösung kann
   // z.B. länger sein als eine andernorts mögliche 4- oder 5-Segment-Lösung.
+  //
+  // WICHTIG: jeder Kandidat wird hier zusätzlich auf saubere 45°/90°-Winkel ZWISCHEN
+  // AUFEINANDERFOLGENDEN Segmenten geprüft, bevor er überhaupt in die Auswahl kommt.
+  // Grund: buildCandidatePool() liefert Richtungen aus drei verschiedenen Bezugssystemen
+  // (feste Weltachsen, relativ zu DA, relativ zu DB) - jede einzelne Richtung ist sauber
+  // zu IHREM EIGENEN Ursprung, aber zwei Richtungen aus unterschiedlichen Bezugssystemen
+  // (z.B. eine Weltachse gefolgt von einer DB-relativen Richtung) landen bei nicht
+  // achsenausgerichteten Markern (der Normalfall bei echten Messungen, nicht bei
+  // synthetischen Testfixtures) i.A. auf einem beliebigen Winkel zueinander - ohne diese
+  // Prüfung wurden solche Kombinationen bisher trotzdem akzeptiert, sobald nur die
+  // Längen-Gleichung eine positive Lösung hatte. Das betrifft auch den scheinbar simplen
+  // "2 Segmente (ein Bogen)"-Zweig unten: DA und DB selbst können bei echten Markern
+  // ebenfalls in einem beliebigen Winkel zueinander stehen.
+  const CLEAN_ANGLES_DEG = [0, 45, 90, 135, 180];
+  // 6° gewählt statt z.B. 1°: reale Marker-Posen haben selbst nach allen Genauigkeits-
+  // verbesserungen noch etwas Rotationsrauschen (getestet: ±8° pro Marker um eine
+  // tatsächlich exakte 90°-Installation wird bei 6° noch zuverlässig als "sauber"
+  // erkannt), pipe-alignment.js korrigiert außerdem nur die Neigung relativ zur
+  // Schwerkraft, NICHT die Kompassrichtung (Azimut) der Marker zueinander. 6° liegt
+  // trotzdem weit unter dem Abstand zu tatsächlich falschen Winkeln (in der Praxis eher
+  // >20° daneben, siehe Testfälle in tests/auto-route.test.mjs).
+  const ANGLE_TOL_DEG = 6;
+  const allTurnsClean = (steps) => {
+    for (let i = 0; i < steps.length - 1; i++) {
+      const deg = THREE.MathUtils.radToDeg(steps[i].dir.angleTo(steps[i + 1].dir));
+      if (!CLEAN_ANGLES_DEG.some((c) => Math.abs(deg - c) < ANGLE_TOL_DEG)) return false;
+    }
+    return true;
+  };
+
   const candidates = [];
   const addCandidate = (steps, label) => {
     if (!steps) return;
+    if (!allTurnsClean(steps)) {
+      log(`Kandidat "${label}" verworfen: Winkel zwischen zwei Segmenten ist nicht 0/45/90/135/180°`);
+      return;
+    }
     candidates.push({ total: steps.reduce((s, x) => s + x.len, 0), steps, label });
   };
 

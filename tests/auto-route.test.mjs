@@ -15,6 +15,11 @@
  *         auch der 2-freie-Parameter-Pfad (Polygon-Schnitt, in der Praxis selten der
  *         beste/kürzeste Kandidat und daher schwer über tryAutoRoute allein zu erreichen)
  *         korrekt ist, nicht nur der 1-Parameter-Pfad (Intervall).
+ *  10. Regressionstest: nicht achsenausgerichtete Marker (Azimut-Differenz kein Vielfaches
+ *      von 45°) durften früher Segmente mit willkürlichem Zwischenwinkel erzeugen (echter,
+ *      am Gerät gemeldeter Bug) - muss jetzt bewusst null statt falscher Geometrie liefern.
+ *  11. Gegenprobe dazu: realistisches Posen-Rauschen um eine tatsächlich saubere 90°-
+ *      Installation darf NICHT dazu führen, dass gar keine Lösung mehr gefunden wird.
  *
  * Ausführen: node tests/auto-route.test.mjs
  */
@@ -187,6 +192,59 @@ function applyDirs(dirs, L) {
       check('solvePolygon2D: alle Längen ≥ minLen', L.every((v) => v >= minLen - 1e-9), `L=${L.map((v) => v.toFixed(4))}`);
     }
   }
+}
+
+/** Prüft, dass JEDER Winkel zwischen zwei aufeinanderfolgenden Segmenten 0/45/90/135/180°
+ *  ist (±Toleranz) - die Kern-Garantie, die buildCandidatePool()s Mischung aus Welt-/DA-/
+ *  DB-relativen Richtungen ohne eine Nachprüfung NICHT automatisch erfüllt, siehe
+ *  Kommentar bei `allTurnsClean` in auto-route.js. */
+function checkAllTurnsClean(name, steps) {
+  if (!steps) { check(name + ': Lösung gefunden', false); return; }
+  const CLEAN = [0, 45, 90, 135, 180];
+  steps.forEach((s, i) => {
+    if (i === steps.length - 1) return;
+    const deg = THREE.MathUtils.radToDeg(s.dir.angleTo(steps[i + 1].dir));
+    const clean = CLEAN.some((c) => Math.abs(deg - c) < 6);
+    check(`${name}: Winkel Segment ${i}->${i + 1} ist 0/45/90/135/180°`, clean, `${deg.toFixed(2)}°`);
+  });
+}
+
+// 10. Regressionstest für einen echten Bug: nicht achsenausgerichtete Marker (der
+//     Normalfall bei echten Messungen - pipe-alignment.js korrigiert nur die Neigung
+//     relativ zur Schwerkraft, NICHT die Kompassrichtung/Azimut der Marker zueinander)
+//     erzeugten früher teils willkürliche Winkel zwischen den Segmenten (107°, 146° etc.),
+//     weil buildCandidatePool() Richtungen aus dem Weltgitter, relativ zu DA und relativ
+//     zu DB mischt, ohne zu prüfen, ob zwei GEWÄHLTE Richtungen zueinander (nicht nur zu
+//     ihrem jeweiligen Ursprung) sauber sind. Beide Marker hier sind bewusst horizontal
+//     (Y=0, wie nach einer Neigungskorrektur), aber mit einer Azimut-Differenz (37°), die
+//     kein Vielfaches von 45° ist - genau der Fall, den pipe-alignment.js NICHT abdeckt.
+{
+  const az = (deg) => { const r = THREE.MathUtils.degToRad(deg); return [Math.cos(r), 0, Math.sin(r)]; };
+  const A = marker([0, 0, 0], az(0));
+  const B = marker([2, 0.3, 1], az(180 - 37));
+  const unit = A.position.distanceTo(B.position);
+  const steps = tryAutoRoute(A, B, unit, unit * 0.02);
+  // Bei einer echten 37°-Azimut-Differenz gibt es innerhalb des abgesuchten Raums (≤5
+  // Segmente aus Welt-/DA-/DB-relativen 45°-Richtungen) tatsächlich keine gültige
+  // All-45°/90°-Lösung - der korrekte Fix gibt dafür bewusst null zurück, statt (wie vor
+  // dem Fix) eine Lösung mit einem willkürlichen Winkel anzubieten.
+  check('37°-Azimut-Differenz: korrekt keine Lösung (statt einer mit falschem Winkel)', steps === null, `${steps?.length} Segment(e) zurückgegeben`);
+}
+
+// 11. Rausch-Robustheit: zwei horizontale Marker, tatsächlich exakt 90° Azimut auseinander
+//     installiert, aber mit realistischem Posen-Schätzungs-Rauschen (±8° je Marker) - das
+//     darf NICHT dazu führen, dass keine Lösung mehr gefunden wird (sonst wäre Auto-Route
+//     bei jeder echten Aufnahme unbrauchbar), und die gefundene Lösung muss trotzdem
+//     überall saubere Winkel haben.
+{
+  const az = (deg) => { const r = THREE.MathUtils.degToRad(deg); return [Math.cos(r), 0, Math.sin(r)]; };
+  const noiseDeg = 8;
+  const A = marker([0, 0, 0], az(0 + noiseDeg));
+  const B = marker([1.5, 0, 1.5], az(90 - noiseDeg));
+  const unit = A.position.distanceTo(B.position);
+  const steps = tryAutoRoute(A, B, unit, unit * 0.02);
+  check(`±${noiseDeg}° Rauschen um eine echte 90°-Installation: Lösung trotzdem gefunden`, !!steps, `${steps?.length} Segment(e)`);
+  checkAllTurnsClean(`±${noiseDeg}° Rauschen`, steps);
 }
 
 console.log(failures === 0 ? '\nAlle Tests bestanden.' : `\n${failures} Test(s) fehlgeschlagen.`);
