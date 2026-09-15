@@ -24,6 +24,11 @@ function getDetector() {
     const dict = cv.getPredefinedDictionary(cv.DICT_6X6_250);
     const params = new cv.aruco_DetectorParameters();
     params.cornerRefinementMethod = cv.CORNER_REFINE_APRILTAG;
+    // Deutlich mehr Iterationen/strengere Abbruchschwelle als OpenCVs Standardwerte
+    // (30 / 0.1px, für Echtzeit-Video ausgelegt) - hier unkritisch, da die App pro
+    // Auslöser nur EIN Bild verfeinert, kein Video-Frame-für-Frame-Tempo braucht.
+    params.cornerRefinementMaxIterations = 100;
+    params.cornerRefinementMinAccuracy = 0.01;
     const refineParams = new cv.aruco_RefineParameters(10, 3, true);
     detector = new cv.aruco_ArucoDetector(dict, params, refineParams);
   }
