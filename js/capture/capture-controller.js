@@ -150,30 +150,29 @@ export function initCaptureFlow(onMarkerData) {
    *  Hand ausgewählt werden muss. Eine manuelle Auswahl (Tab ".npz") überschreibt das
    *  danach jederzeit wieder.
    *
-   *  WICHTIG: diese Standard-Datei stammt von genau EINEM konkreten Handy, nicht vom
-   *  Gerät der aktuellen Nutzerin/des aktuellen Nutzers - andere Brennweite, anderer
-   *  Bildmittelpunkt und vor allem andere Verzeichnungskoeffizienten führen zu einem
-   *  SYSTEMATISCHEN (nicht durch Mehrbild-Fusion ausgleichbaren) Tiefenfehler, der sich
-   *  z.B. als Höhenversatz zweier eigentlich koplanarer Marker zeigt. Deshalb hier klar
-   *  sichtbar (nicht nur in der Konsole) darauf hinweisen, wenn schon allein das
-   *  Seitenverhältnis von Kalibrierfoto und Kamerastream nicht zusammenpasst - ein starkes
-   *  Indiz dafür, dass diese Kalibrierung nicht zum tatsächlich genutzten Gerät passt. */
+   *  Meldet den Erfolg deutlich sichtbar (nicht nur in der Konsole), inkl. der geladenen
+   *  fx/fy-Werte zur Kontrolle. Warnt zusätzlich, wenn schon allein das Seitenverhältnis
+   *  von Kalibrierfoto und aktuellem Kamerastream nicht zusammenpasst - das ist unabhängig
+   *  davon, von welchem Gerät die Datei stammt, ein Hinweis auf einen SYSTEMATISCHEN
+   *  (durch Mehrbild-Fusion nicht ausgleichbaren) Tiefenfehler, z.B. sichtbar als
+   *  Höhenversatz zweier eigentlich koplanarer Marker. */
   function loadDefaultCalibration() {
     fetch('assets/default-calib.npz')
       .then((r) => (r.ok ? r.blob() : Promise.reject()))
       .then((blob) => loadCalibrationNpz(blob))
       .then((loaded) => {
-        const { hasDist, aspectMismatch } = applyCalibration(loaded);
+        const { fx, fy, hasDist, aspectMismatch } = applyCalibration(loaded);
         if (aspectMismatch) {
           showCalibSummary(
-            'Standard-.npz aktiv, passt aber nicht zu diesem Kamerastream (anderes Seitenverhältnis) - ' +
-            'stammt von einem anderen Gerät. Für genaue Tiefe/Höhe eigene Kalibrierung nutzen (Tab ".npz" ' +
-            'oder "Kalibrierblatt").', false
+            `✓ assets/default-calib.npz geladen (fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}), passt aber im ` +
+            'Seitenverhältnis nicht zum aktuellen Kamerastream - Tiefe/Höhe evtl. systematisch verfälscht. ' +
+            'Falls das nicht die Kalibrierung dieses Geräts ist: eigene erstellen (Tab ".npz" oder "Kalibrierblatt").',
+            false
           );
         } else {
           showCalibSummary(
-            'Aktive Kalibrierung: Standard-.npz' + (hasDist ? ' (inkl. Verzeichnungskorrektur)' : '') +
-            ' - stammt von einem anderen Gerät, für beste Genauigkeit eigene Kalibrierung nutzen.'
+            `✓ assets/default-calib.npz geladen: fx=${fx.toFixed(0)} fy=${fy.toFixed(0)}` +
+            (hasDist ? ' (inkl. Verzeichnungskorrektur)' : ' (keine Verzeichnung in der Datei)')
           );
         }
       })

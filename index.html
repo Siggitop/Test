@@ -19,7 +19,7 @@
 
  <div id="calibBox">
   <b>Kamera-Kalibrierung</b>
-  <div class="muted" style="color:#8ea3c4;margin:4px 0 8px;font-size:11px;line-height:1.4">Ohne Kalibrierung wird fx/fy grob aus der Bildbreite geschätzt. Die mitgelieferte Standard-.npz stammt von einem fremden Testgerät - für genaue Tiefe/Höhe unbedingt eine eigene Kalibrierung für <b>dieses</b> Gerät erstellen (.npz oder Kalibrierblatt).</div>
+  <div class="muted" style="color:#8ea3c4;margin:4px 0 8px;font-size:11px;line-height:1.4">Ohne Kalibrierung wird fx/fy grob aus der Bildbreite geschätzt. Die mitgelieferte Standard-.npz wird automatisch geladen (Bestätigung unten) - falls sie nicht zu diesem Gerät/dieser Auflösung passt, für genaue Tiefe/Höhe eine eigene Kalibrierung erstellen (.npz oder Kalibrierblatt).</div>
 
   <div class="calibTabs">
    <button id="calibTabNpz" class="calibTab active">.npz</button>
@@ -28,7 +28,7 @@
   </div>
 
   <div id="calibPaneNpz" class="calibPane">
-   <div class="muted" style="color:#b9c8e2;margin-bottom:6px">Deine camera_calib.npz (erwartet Arrays "K" und "dist", genau wie im Python-Skript).</div>
+   <div class="muted" style="color:#b9c8e2;margin-bottom:6px">Deine camera_calib.npz (erwartet Arrays "K" und "dist", genau wie im Python-Skript). Für beste Genauigkeit die Kalibrierfotos möglichst in derselben Auflösung wie dieser Kamerastream aufnehmen (aktuell angefragt: 1920×1080) - bei stark abweichender Auflösung/Seitenverhältnis (z.B. normale Fotos vom Handy) ist die Umrechnung nur eine Näherung.</div>
    <input type="file" id="npzFile" accept=".npz">
    <div id="npzStatus" class="muted" style="margin-top:6px;color:#b9c8e2"></div>
   </div>

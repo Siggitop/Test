@@ -89,16 +89,22 @@ Demo-Daten-Flow durchspielen, Konsole beobachten).
 
 ## Bekannte Einschränkungen (bewusst, mit Fundstelle im Code)
 
-- **Die mitgelieferte `assets/default-calib.npz` stammt von einem fremden Testgerät**,
-  nicht vom Gerät der Nutzerin/des Nutzers. Andere Brennweite, anderer Bildmittelpunkt und
-  vor allem andere Verzeichnungskoeffizienten führen zu einem SYSTEMATISCHEN (durch
-  Mehrbild-Fusion, `js/vision/multi-view-fusion.js`, NICHT ausgleichbaren) Tiefenfehler -
-  zeigt sich z.B. als Höhenversatz zweier eigentlich koplanarer Marker (jetzt als
-  "Höhenversatz" in der Infotafel sichtbar, `PipeRoutingApp.js`). `capture-controller.js`
-  warnt sichtbar (nicht nur in der Konsole), wenn schon das Seitenverhältnis von
-  Kalibrierfoto und Kamerastream nicht zusammenpasst - ein starkes Indiz für genau dieses
-  Problem. Für belastbare Tiefe/Höhe eine eigene `.npz`-Kalibrierung für das tatsächlich
-  genutzte Gerät erstellen.
+- **`.npz`-Kalibrierfotos in anderer Auflösung/Seitenverhältnis als der Live-Kamerastream
+  (z.B. normale Handyfotos im Fotomodus vs. der 1920×1080-Videostream) verursachen einen
+  SYSTEMATISCHEN Tiefenfehler**, den Mehrbild-Fusion (`js/vision/multi-view-fusion.js`)
+  NICHT ausgleichen kann (die mittelt nur zufälliges Eckenrauschen zwischen Fotos weg,
+  keine in jedem Foto gleiche Kalibrierungs-Bias) - zeigt sich z.B. als Höhenversatz
+  zweier eigentlich koplanarer Marker (als "Höhenversatz" in der Infotafel sichtbar,
+  `PipeRoutingApp.js`). Grund: `applyCalibration()` (`capture-controller.js`) skaliert
+  fx/fy/cx/cy beim Laden unabhängig je Achse auf die Stream-Auflösung - das ist nur bei
+  einer reinen Größenänderung exakt richtig, nicht wenn Foto- und Video-Modus
+  unterschiedliche Sensor-Ausschnitte/Seitenverhältnisse nutzen (sehr üblich bei
+  Smartphones). `capture-controller.js` warnt deshalb sichtbar (nicht nur in der Konsole),
+  wenn Kalibrierfoto- und Stream-Seitenverhältnis deutlich abweichen, und bestätigt
+  umgekehrt sichtbar mit fx/fy-Werten, wenn eine Kalibrierung geladen wurde. Für
+  belastbare Tiefe/Höhe: Kalibrierfotos möglichst in derselben Auflösung wie der
+  Live-Kamerastream aufnehmen, dann entfällt die Umrechnung (und damit diese
+  Fehlerquelle) komplett.
 - **Kalibrierblatt schätzt keine Verzeichnung.** `calibration-sheet.js` liefert nur
   fx/fy + angenommene Bildmitte (Fluchtpunkt-Methode aus einer einzigen Ansicht). Für
   Verzeichnungskorrektur: `.npz`-Weg mit echter OpenCV-Kalibrierung nutzen.
